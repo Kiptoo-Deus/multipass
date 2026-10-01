@@ -26,6 +26,7 @@
 #include <multipass/logging/log.h>
 #include <multipass/platform_unix.h>
 #include <multipass/signal.h>
+#include <multipass/ssh/libssh_scope_guard.h>
 #include <multipass/top_catch_all.h>
 #include <multipass/utils.h>
 #include <multipass/version.h>
@@ -97,11 +98,12 @@ int main_impl(int argc, char* argv[], mp::Signal& app_ready_signal)
 
     mp::Daemon daemon(std::move(config));
 
-    QObject::connect(&app,
-                     &QCoreApplication::aboutToQuit,
-                     &daemon,
-                     &mp::Daemon::shutdown_grpc_server,
-                     Qt::DirectConnection);
+    QObject::connect(
+        &app,
+        &QCoreApplication::aboutToQuit,
+        &daemon,
+        [&daemon] { mp::top_catch_all("daemon", [&daemon] { daemon.shutdown_grpc_server(); }); },
+        Qt::DirectConnection);
 
     mpl::info("daemon", "Starting Multipass {}", mp::version_string);
     mpl::info("daemon", "Daemon arguments: {}", app.arguments().join(" "));
@@ -121,6 +123,12 @@ int main_impl(int argc, char* argv[], mp::Signal& app_ready_signal)
 
 int main(int argc, char* argv[])
 {
+    // Verify that the version of the library that we linked against is
+    // compatible with the version of the headers we compiled against.
+    GOOGLE_PROTOBUF_VERIFY_VERSION;
+
+    multipass::LibsshScopeGuard libssh_guard;
+
     mp::Signal app_ready_signal{};
     //
     // Register the signal handler as the first thing so the signal handler won't miss

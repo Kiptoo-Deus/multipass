@@ -19,6 +19,7 @@
 #include <multipass/cli/format_utils.h>
 #include <multipass/format.h>
 #include <multipass/utils.h>
+#include <multipass/utils/sorted_map_view.h>
 
 namespace mp = multipass;
 
@@ -87,33 +88,35 @@ std::string generate_instance_details(const mp::InfoReply reply)
 
     fmt::memory_buffer buf;
     fmt::format_to(std::back_inserter(buf),
-                   "Name,State,Ipv4,Release,Image hash,Image release,Load,Disk usage,Disk "
-                   "total,Memory usage,Memory "
-                   "total,Mounts,AllIPv4,CPU(s){}\n",
+                   "Name,State,Zone,Zone available,Ipv4,Release,Image hash,"
+                   "Image release,Load,Disk usage,Disk total,Memory usage,"
+                   "Memory total,Mounts,AllIPv4,CPU(s){}\n",
                    have_num_snapshots ? ",Snapshots" : "");
 
     for (const auto& info : mp::format::sorted(reply.details()))
     {
         const auto& instance_details = info.instance_info();
 
-        fmt::format_to(std::back_inserter(buf),
-                       "{},{},{},{},{},{},{},{},{},{},{},{},{},{}{}\n",
-                       info.name(),
-                       mp::format::status_string_for(info.instance_status()),
-                       instance_details.ipv4_size() ? instance_details.ipv4(0) : "",
-                       instance_details.current_release(),
-                       instance_details.id(),
-                       instance_details.image_release(),
-                       instance_details.load(),
-                       instance_details.disk_usage(),
-                       info.disk_total(),
-                       instance_details.memory_usage(),
-                       info.memory_total(),
-                       info.mount_info(),
-                       fmt::join(instance_details.ipv4(), ";"),
-                       info.cpu_count(),
-                       have_num_snapshots ? fmt::format(",{}", instance_details.num_snapshots())
-                                          : "");
+        fmt::format_to(
+            std::back_inserter(buf),
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}{}\n",
+            info.name(),
+            mp::format::status_string_for(info.instance_status()),
+            !info.zone().name().empty() ? info.zone().name() : std::string{"n/a"},
+            !info.zone().name().empty() ? fmt::to_string(info.zone().available()) : std::string{},
+            instance_details.ipv4_size() ? instance_details.ipv4(0) : "",
+            instance_details.current_release(),
+            instance_details.id(),
+            instance_details.image_release(),
+            instance_details.load(),
+            instance_details.disk_usage(),
+            info.disk_total(),
+            instance_details.memory_usage(),
+            info.memory_total(),
+            info.mount_info(),
+            fmt::join(instance_details.ipv4(), ";"),
+            info.cpu_count(),
+            have_num_snapshots ? fmt::format(",{}", instance_details.num_snapshots()) : "");
     }
 
     return fmt::to_string(buf);
@@ -123,20 +126,24 @@ std::string generate_instances_list(const mp::InstancesList& instance_list)
 {
     fmt::memory_buffer buf;
 
-    fmt::format_to(std::back_inserter(buf), "Name,State,IPv4,Release,AllIPv4\n");
+    fmt::format_to(std::back_inserter(buf),
+                   "Name,State,IPv4,Release,AllIPv4,Zone,Zone available\n");
 
     for (const auto& instance : mp::format::sorted(instance_list.instances()))
     {
         fmt::format_to(
             std::back_inserter(buf),
-            "{},{},{},{},\"{}\"\n",
+            "{},{},{},{},\"{}\",{},{}\n",
             instance.name(),
             mp::format::status_string_for(instance.instance_status()),
             instance.ipv4_size() ? instance.ipv4(0) : "",
             instance.current_release().empty()
                 ? "Not Available"
                 : mp::utils::trim(fmt::format("{} {}", instance.os(), instance.current_release())),
-            fmt::join(instance.ipv4(), ","));
+            fmt::join(instance.ipv4(), ","),
+            !instance.zone().name().empty() ? instance.zone().name() : std::string{"n/a"},
+            !instance.zone().name().empty() ? fmt::to_string(instance.zone().available())
+                                            : std::string{});
     }
 
     return fmt::to_string(buf);
@@ -248,21 +255,39 @@ std::string mp::CSVFormatter::format(const mp::AliasDict& aliases) const
     fmt::memory_buffer buf;
     fmt::format_to(std::back_inserter(buf), "Alias,Instance,Command,Working directory,Context\n");
 
-    for (const auto& [context_name, context_contents] : sort_dict(aliases))
+    for (const auto& [context_name, context_contents] : sorted_map_view(aliases))
     {
-        std::string shown_context =
-            context_name == aliases.active_context_name() ? context_name + "*" : context_name;
+        std::string shown_context = context_name.get() == aliases.active_context_name()
+                                      ? context_name.get() + "*"
+                                      : context_name.get();
 
-        for (const auto& [name, def] : sort_dict(context_contents))
+        for (const auto& [name, def] : sorted_map_view(context_contents.get()))
         {
             fmt::format_to(std::back_inserter(buf),
                            "{},{},{},{},{}\n",
-                           name,
-                           def.instance,
-                           def.command,
-                           def.working_directory,
+                           name.get(),
+                           def.get().instance,
+                           def.get().command,
+                           def.get().working_directory,
                            shown_context);
         }
+    }
+
+    return fmt::to_string(buf);
+}
+
+std::string mp::CSVFormatter::format(const ZonesReply& reply) const
+{
+    fmt::memory_buffer buf;
+    fmt::format_to(std::back_inserter(buf), "Name,Available,Subnet\n");
+
+    for (const auto& zone : reply.zones())
+    {
+        fmt::format_to(std::back_inserter(buf),
+                       "{},{},{}\n",
+                       zone.name(),
+                       zone.available(),
+                       zone.subnet());
     }
 
     return fmt::to_string(buf);

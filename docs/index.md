@@ -12,7 +12,7 @@ Accessing files from your host machine is supported through the `multipass mount
 Please learn more details in the linked documentation topics.
 -->
 
-Multipass is a tool to generate cloud-style Ubuntu VMs quickly on Linux, macOS and Windows. It provides a simple but powerful CLI that enables you to quickly access an Ubuntu command line or create your own local mini-cloud.
+Multipass is a tool to generate cloud-style virtual machines (VMs) quickly on Linux, macOS and Windows. It provides a simple but powerful CLI that enables you to quickly access an Ubuntu command line, launch instances of other Linux distributions, or create your own local mini-cloud.
 
 Local development and testing can be challenging, but Multipass simplifies these processes by automating setup and teardown. Multipass has a growing library of images that you can use to launch purpose-built VMs or custom VMs you’ve configured yourself through its powerful `cloud-init` interface.
 
@@ -22,34 +22,58 @@ Developers can use Multipass to prototype cloud deployments and to create fresh,
 
 ## In this documentation
 
-````{grid} 1 1 2 2
+### Basics
 
-```{grid-item-card} [Tutorial](tutorial/index)
+Start here to install and launch your first Multipass instance.
 
-**Get started:** a hands-on introduction to Multipass for new users
-```
+- Tutorial: [Getting started with Multipass](tutorial-getting-started) • [Install Multipass](how-to-guides-install-multipass) •  [Setup the driver](how-to-guides-customise-multipass-set-up-the-driver) • [Migrate from Hyperkit to QEMU](how-to-guides-customise-multipass-migrate-from-hyperkit-to-qemu-on-macos)
 
-```{grid-item-card} [How-to guides](how-to-guides/index)
+### Using Multipass
 
-**Step-by-step guides** covering key operations and common tasks
-```
+Learn the complete lifecycle of a virtual machine.
 
-````
+- **Instance management:** [Create an instance](how-to-guides-manage-instances-create-an-instance) • [Use an instance](how-to-guides-manage-instances-use-an-instance) • [Modify an instance](how-to-guides-manage-instances-modify-an-instance)  • [Use the primary instance](how-to-guides-manage-instances-use-the-primary-instance) • [Use instance command aliases](how-to-guides-manage-instances-use-instance-command-aliases) • [Remove an instance](how-to-guides-manage-instances-remove-an-instance)
 
-````{grid} 1 1 2 2
-:reverse:
+- **Instance customization:** [`cloud-init`](how-to-guides-manage-instances-launch-customized-instances-with-multipass-and-cloud-init) • [Build Multipass images with Packer](how-to-guides-customise-multipass-build-multipass-images-with-packer) • [Set up a graphical interface](how-to-guides-customise-multipass-set-up-a-graphical-interface)
 
-```{grid-item-card} [Reference](reference/index)
+- **Interfaces (CLI/GUI):** [Command-line interface](reference-command-line-interface-index) • [GUI client](reference-gui-client) • [Use a different terminal from the system icon](how-to-guides-customise-multipass-use-a-different-terminal-from-the-system-icon) • [How to integrate with Windows Terminal](how-to-guides-customise-multipass-integrate-with-windows-terminal)
 
-**Technical information** - specifications, APIs, architecture
-```
+- **Troubleshooting:** [Access logs](how-to-guides-troubleshoot-access-logs) • [Troubleshoot launch/start issues](how-to-guides-troubleshoot-troubleshoot-launch-start-issues)
 
-```{grid-item-card} [Explanation](explanation/index)
+### Understanding Multipass
 
-**Concepts** - discussion and clarification of key topics
-```
+- **Core concepts:** [Instance](explanation-instance) • [Image](explanation-image) • [Snapshot](explanation-snapshot) • [Alias](explanation-alias) • [Service](explanation-service) • [Multipass exec and shells](explanation-multipass-exec-and-shells) • [ID mapping](explanation-id-mapping) • [Reference architecture](explanation-reference-architecture)
 
-````
+- **Virtualization:** [Driver](explanation-driver) • [How to set up the driver](how-to-guides-customise-multipass-set-up-the-driver) • [Migrate from Hyperkit to QEMU on macOS](how-to-guides-customise-multipass-migrate-from-hyperkit-to-qemu-on-macos) • [Migrate from Hyper-V to the HCS driver on Windows](how-to-guides-customise-multipass-migrate-from-hyperv-to-hcs-on-windows) • [Move from VirtualBox to another driver](how-to-guides-customise-multipass-move-from-virtualbox-to-another-driver) • [Platform](explanation-platform) • [Host](explanation-host)
+
+- **Configuration:** [Settings](reference-settings-index) • [Settings keys and values](explanation-settings-keys-values) • [Logging levels](reference-logging-levels) • [Configure Multipass's default logging level](how-to-guides-customise-multipass-configure-multipass-default-logging-level) • [Instance name format](reference-instance-name-format) • [Instance states](reference-instance-states)
+
+### Resources and networking
+
+- **Storage:** [Share data with an instance](how-to-guides-manage-instances-share-data-with-an-instance) • [Configure where Multipass stores external data](how-to-guides-customise-multipass-configure-where-multipass-stores-external-data) • [Mount](explanation-mount) • [Mount an encrypted home folder](how-to-guides-troubleshoot-mount-an-encrypted-home-folder)
+
+- **Networking:** [Add a network to an existing instance](how-to-guides-manage-instances-add-a-network-to-an-existing-instance) • [Configure static IPs](how-to-guides-manage-instances-configure-static-ips) • [Troubleshoot networking](how-to-guides-troubleshoot-troubleshoot-networking)
+
+### Security and performance
+
+- **Security:** [Authenticate users with the Multipass service](how-to-guides-customise-multipass-authenticate-users-with-the-multipass-service) • [Authentication](explanation-authentication) • [About security](explanation-about-security)
+
+- **Performance:** [About performance](explanation-about-performance)
+
+---
+
+## How this documentation is organized
+
+This documentation uses the [Diátaxis documentation structure](https://diataxis.fr/).
+
+- [Tutorial](tutorial-index) takes you step-by-step through your first Multipass workflow, from installation to launching and working with instances.
+
+- [How-to guides](how-to-guides-index) assume you have basic familiarity with Multipass. They cover practical tasks such as instance management, configuration, networking, and troubleshooting.
+
+- [Reference](reference-index) provides technical details on CLI commands, settings, architecture, and platform-specific behavior.
+
+- [Explanation](explanation-index) includes conceptual overviews, background context, and deeper discussion of how Multipass works.
+
 ---
 
 ## Project and community
@@ -72,5 +96,6 @@ tutorial/index
 how-to-guides/index
 reference/index
 explanation/index
+reference/release-notes/index
 contribute-to-multipass-docs
 ```

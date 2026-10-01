@@ -18,6 +18,7 @@
 #include <multipass/constants.h>
 #include <multipass/exceptions/download_exception.h>
 #include <multipass/exceptions/image_not_found_exception.h>
+#include <multipass/exceptions/unsupported_arch_exception.h>
 #include <multipass/image_host/custom_image_host.h>
 #include <multipass/logging/log.h>
 #include <multipass/query.h>
@@ -26,8 +27,7 @@
 
 #include <fmt/format.h>
 
-#include <QJsonDocument>
-#include <QJsonObject>
+#include <boost/json.hpp>
 
 #include <utility>
 
@@ -44,81 +44,53 @@ constexpr auto manifest_endpoint{"https://raw.githubusercontent.com/canonical/mu
 auto get_manifest_url()
 {
     return qEnvironmentVariable(mp::distributions_url_env_var).isEmpty()
-               ? manifest_endpoint
-               : qEnvironmentVariable(mp::distributions_url_env_var);
+             ? manifest_endpoint
+             : qEnvironmentVariable(mp::distributions_url_env_var);
 }
 
-auto map_aliases_to_vm_info(const std::vector<mp::VMImageInfo>& images)
+std::vector<mp::VMImageInfo> fetch_image_info(const std::string& arch,
+                                              mp::URLDownloader* url_downloader,
+                                              bool force_update = false)
 {
-    std::unordered_map<std::string, const mp::VMImageInfo*> map;
-    for (const auto& image : images)
-    {
-        map[image.id.toStdString()] = &image;
-        for (const auto& alias : image.aliases)
-        {
-            map[alias.toStdString()] = &image;
-        }
-    }
-
-    return map;
-}
-
-auto fetch_image_info(const QString& arch,
-                      mp::URLDownloader* url_downloader,
-                      const bool force_update = false)
-{
-    std::vector<mp::VMImageInfo> images;
-
     mpl::log(mpl::Level::debug, category, "Fetching images from {}", get_manifest_url());
-    QByteArray mp_manifest;
 
     try
     {
-        mp_manifest = url_downloader->download(QUrl{get_manifest_url()}, force_update);
+        auto data = url_downloader->download(QUrl{get_manifest_url()}, force_update);
+        auto manifest = boost::json::parse(std::string_view(data)).as_object();
+        mpl::log(mpl::Level::debug, category, "Found {} items", manifest.size());
+
+        mp::ArchContext context{arch};
+        std::vector<mp::VMImageInfo> result;
+        for (const auto& [distro_name, value] : manifest)
+        {
+            try
+            {
+                result.push_back(value_to<mp::VMImageInfo>(value, context));
+            }
+            catch (const mp::UnsupportedArchException&)
+            {
+                mpl::debug(category,
+                           "Skipping unsupported distro '{}' for arch '{}'",
+                           distro_name,
+                           arch);
+                continue;
+            }
+        }
+        return result;
     }
     catch (mp::DownloadException& e)
     {
         mpl::log(mpl::Level::warning, category, "Failed to download manifest: {}", e);
-        return images;
+        return {};
     }
-
-    const auto manifest_doc = QJsonDocument::fromJson(mp_manifest);
-    if (!manifest_doc.isObject())
+    catch (const boost::system::system_error&)
     {
         mpl::log(mpl::Level::warning,
                  category,
                  "Failed to parse manifest: file does not contain a valid JSON object");
-        return images;
+        return {};
     }
-
-    const QJsonObject root_obj = manifest_doc.object();
-
-    mpl::log(mpl::Level::debug, category, "Found {} items", root_obj.size());
-
-    for (auto it = root_obj.begin(); it != root_obj.end(); ++it)
-    {
-        const QString distro_name = it.key();
-        const QJsonObject distro_obj = it.value().toObject();
-
-        QStringList aliases = distro_obj.value("aliases").toString().split(",", Qt::SkipEmptyParts);
-        for (QString& alias : aliases)
-            alias = alias.trimmed();
-
-        images.emplace_back(mp::VMImageInfo{aliases,
-                                            distro_obj["os"].toString(),
-                                            distro_obj["release"].toString(),
-                                            distro_obj["release_codename"].toString(),
-                                            distro_obj["release_title"].toString(),
-                                            true,
-                                            distro_obj["items"][arch]["image_location"].toString(),
-                                            distro_obj["items"][arch]["id"].toString(),
-                                            "",
-                                            distro_obj["items"][arch]["version"].toString(),
-                                            distro_obj["items"][arch]["size"].toInt(-1),
-                                            true});
-    }
-
-    return images;
 }
 } // namespace
 
@@ -129,50 +101,48 @@ mp::CustomManifest::CustomManifest(std::vector<VMImageInfo>&& images)
 
 mp::CustomVMImageHost::CustomVMImageHost(URLDownloader* downloader)
     : BaseVMImageHost{downloader},
-      arch{QSysInfo::currentCpuArchitecture()},
+      arch{QSysInfo::currentCpuArchitecture().toStdString()},
       manifest{},
       remote{no_remote}
 {
 }
 
-std::optional<mp::VMImageInfo> mp::CustomVMImageHost::info_for(const Query& query)
+std::optional<mp::VMImageInfo> mp::CustomVMImageHost::info_for_impl(const Query& query) const
 {
-    auto custom_manifest = manifest_from(query.remote_name);
+    const auto& custom_manifest = manifest_from(query.remote_name);
 
-    auto it = custom_manifest->image_records.find(query.release);
+    auto it = custom_manifest.image_records.find(query.release);
 
-    if (it == custom_manifest->image_records.end())
+    if (it == custom_manifest.image_records.end())
         return std::nullopt;
 
     return *it->second;
 }
 
-std::vector<std::pair<std::string, mp::VMImageInfo>> mp::CustomVMImageHost::all_info_for(
-    const Query& query)
+std::vector<std::pair<std::string, mp::VMImageInfo>> mp::CustomVMImageHost::all_info_for_impl(
+    const Query& query) const
 {
     std::vector<std::pair<std::string, mp::VMImageInfo>> images;
 
-    if (auto image = info_for(query))
+    if (auto image = info_for_impl(query))
         images.emplace_back(query.remote_name, std::move(*image));
 
     return images;
 }
 
-std::vector<mp::VMImageInfo> mp::CustomVMImageHost::all_images_for(const std::string& remote_name,
-                                                                   const bool allow_unsupported)
+std::vector<mp::VMImageInfo> mp::CustomVMImageHost::all_images_for_impl(
+    const std::string& remote_name,
+    bool /*allow_unsupported*/) const
 {
-    if (auto custom_manifest = manifest_from(remote_name))
-        return custom_manifest->products;
-
-    return {};
+    return manifest_from(remote_name).products;
 }
 
-std::vector<std::string> mp::CustomVMImageHost::supported_remotes()
+std::vector<std::string> mp::CustomVMImageHost::supported_remotes() const
 {
     return {remote};
 }
 
-void mp::CustomVMImageHost::for_each_entry_do_impl(const Action& action)
+void mp::CustomVMImageHost::for_each_entry_do_impl(const Action& action) const
 {
     for (const auto& info : manifest.second->products)
     {
@@ -180,11 +150,11 @@ void mp::CustomVMImageHost::for_each_entry_do_impl(const Action& action)
     }
 }
 
-mp::VMImageInfo mp::CustomVMImageHost::info_for_full_hash_impl(const std::string& full_hash)
+mp::VMImageInfo mp::CustomVMImageHost::info_for_full_hash_impl(const std::string& full_hash) const
 {
     for (const auto& product : manifest.second->products)
     {
-        if (multipass::utils::iequals(product.id.toStdString(), full_hash))
+        if (multipass::utils::iequals(product.id, full_hash))
         {
             return product;
         }
@@ -193,7 +163,7 @@ mp::VMImageInfo mp::CustomVMImageHost::info_for_full_hash_impl(const std::string
     throw mp::ImageNotFoundException(full_hash);
 }
 
-void mp::CustomVMImageHost::fetch_manifests(const bool force_update)
+void mp::CustomVMImageHost::fetch_manifests(bool force_update)
 {
     try
     {
@@ -212,11 +182,11 @@ void mp::CustomVMImageHost::clear()
     manifest = std::pair<std::string, std::unique_ptr<CustomManifest>>{};
 }
 
-mp::CustomManifest* mp::CustomVMImageHost::manifest_from(const std::string& remote_name)
+const mp::CustomManifest& mp::CustomVMImageHost::manifest_from(const std::string& remote_name) const
 {
-    if (remote_name != manifest.first)
+    if (remote_name != manifest.first || !manifest.second)
         throw std::runtime_error(
             fmt::format("Remote \"{}\" is unknown or unreachable.", remote_name));
 
-    return manifest.second.get();
+    return *manifest.second;
 }

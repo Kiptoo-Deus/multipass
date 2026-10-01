@@ -17,6 +17,8 @@
 
 #include "qemu_mount_handler.h"
 
+#include <multipass/logging/log_location.h>
+#include <multipass/ssh/ssh_process.h>
 #include <multipass/utils.h>
 
 #include <QUuid>
@@ -41,7 +43,7 @@ QemuMountHandler::QemuMountHandler(QemuVirtualMachine* vm,
       // Create a reproducible unique mount tag for each mount. The cmd arg can only be 31 bytes
       // long so part of the uuid must be truncated. First character of tag must also be
       // alphabetical.
-      tag{mp::utils::make_uuid(target).remove("-").left(30).prepend('m').toStdString()}
+      tag{make_tag(target)}
 {
     auto state = vm->current_state();
     if (state == VirtualMachine::State::suspended && vm_mount_args.find(tag) != vm_mount_args.end())
@@ -96,9 +98,8 @@ bool QemuMountHandler::is_active()
 try
 {
     return active &&
-           !SSHSession{vm->ssh_hostname(), vm->ssh_port(), vm->ssh_username(), *ssh_key_provider}
-                .exec(fmt::format("findmnt --type 9p | grep '{} {}'", target, tag))
-                .exit_code();
+           !vm->ssh_exec_process(fmt::format("findmnt --type 9p | grep '{} {}'", target, tag))
+                ->exit_code();
 }
 catch (const std::exception& e)
 {
@@ -112,34 +113,24 @@ catch (const std::exception& e)
 
 void QemuMountHandler::activate_impl(ServerVariant, std::chrono::milliseconds)
 {
-    SSHSession session{vm->ssh_hostname(), vm->ssh_port(), vm->ssh_username(), *ssh_key_provider};
+    auto session = vm->new_ssh_session();
 
     // Split the path in existing and missing parts
     // We need to create the part of the path which does not still exist, and set then the correct
     // ownership.
-    if (const auto& [leading, missing] = mpu::get_path_split(session, target); missing != ".")
+    if (const auto& [leading, missing] = mpu::get_path_split(*session, target); missing != ".")
     {
-        const auto default_uid = std::stoi(MP_UTILS.run_in_ssh_session(session, "id -u"));
-        mpl::debug(category,
-                   "{}:{} {}(): `id -u` = {}",
-                   __FILE__,
-                   __LINE__,
-                   __FUNCTION__,
-                   default_uid);
-        const auto default_gid = std::stoi(MP_UTILS.run_in_ssh_session(session, "id -g"));
-        mpl::debug(category,
-                   "{}:{} {}(): `id -g` = {}",
-                   __FILE__,
-                   __LINE__,
-                   __FUNCTION__,
-                   default_gid);
+        const auto default_uid = std::stoi(MP_UTILS.run_in_ssh_session(*session, "id -u"));
+        mpl::debug_location(category, "`id -u` = {}", default_uid);
+        const auto default_gid = std::stoi(MP_UTILS.run_in_ssh_session(*session, "id -g"));
+        mpl::debug_location(category, "`id -g` = {}", default_gid);
 
-        mpu::make_target_dir(session, leading, missing);
-        mpu::set_owner_for(session, leading, missing, default_uid, default_gid);
+        mpu::make_target_dir(*session, leading, missing);
+        mpu::set_owner_for(*session, leading, missing, default_uid, default_gid);
     }
 
     MP_UTILS.run_in_ssh_session(
-        session,
+        *session,
         fmt::format("sudo mount -t 9p {} {} -o trans=virtio,version=9p2000.L,msize=536870912",
                     tag,
                     target));
@@ -149,10 +140,7 @@ void QemuMountHandler::deactivate_impl(bool force)
 try
 {
     mpl::info(category, "Stopping native mount \"{}\" in instance '{}'", target, vm->get_name());
-    SSHSession session{vm->ssh_hostname(), vm->ssh_port(), vm->ssh_username(), *ssh_key_provider};
-    MP_UTILS.run_in_ssh_session(
-        session,
-        fmt::format("if mountpoint -q {0}; then sudo umount {0}; else true; fi", target));
+    vm->ssh_exec(fmt::format("if mountpoint -q {0}; then sudo umount {0}; else true; fi", target));
 }
 catch (const std::exception& e)
 {
@@ -169,5 +157,12 @@ QemuMountHandler::~QemuMountHandler()
 {
     deactivate(/*force=*/true);
     vm_mount_args.erase(tag);
+}
+
+std::string QemuMountHandler::make_tag(const std::string& seed)
+{
+    auto uuid = mp::utils::make_uuid(seed);
+    std::erase(uuid, '-');
+    return fmt::format("m{:.30}", uuid);
 }
 } // namespace multipass

@@ -183,8 +183,9 @@ void update_mac_addresses_of_network_adapters(const mp::VirtualMachineDescriptio
 mp::VirtualBoxVirtualMachine::VirtualBoxVirtualMachine(const VirtualMachineDescription& desc,
                                                        VMStatusMonitor& monitor,
                                                        const SSHKeyProvider& key_provider,
+                                                       AvailabilityZone& zone,
                                                        const mp::Path& instance_dir_qstr)
-    : VirtualBoxVirtualMachine(desc, monitor, key_provider, instance_dir_qstr, true)
+    : VirtualBoxVirtualMachine(desc, monitor, key_provider, zone, instance_dir_qstr, true)
 {
     if (desc.extra_interfaces.size() > 7)
     {
@@ -232,7 +233,7 @@ mp::VirtualBoxVirtualMachine::VirtualBoxVirtualMachine(const VirtualMachineDescr
                                      "--type",
                                      "hdd",
                                      "--medium",
-                                     desc.image.image_path},
+                                     MP_PLATFORM.path_to_qstr(desc.image.image_path)},
                                     "Could not storageattach HDD: {}",
                                     name);
 
@@ -264,8 +265,9 @@ mp::VirtualBoxVirtualMachine::VirtualBoxVirtualMachine(const std::string& source
                                                        const VirtualMachineDescription& desc,
                                                        VMStatusMonitor& monitor,
                                                        const SSHKeyProvider& key_provider,
+                                                       AvailabilityZone& zone,
                                                        const Path& dest_instance_dir)
-    : VirtualBoxVirtualMachine(desc, monitor, key_provider, dest_instance_dir, true)
+    : VirtualBoxVirtualMachine(desc, monitor, key_provider, zone, dest_instance_dir, true)
 {
     const fs::path instances_dir = fs::path{dest_instance_dir.toStdString()}.parent_path();
 
@@ -330,10 +332,10 @@ mp::VirtualBoxVirtualMachine::VirtualBoxVirtualMachine(const std::string& source
 mp::VirtualBoxVirtualMachine::VirtualBoxVirtualMachine(const VirtualMachineDescription& desc,
                                                        VMStatusMonitor& monitor,
                                                        const SSHKeyProvider& key_provider,
+                                                       AvailabilityZone& zone,
                                                        const mp::Path& instance_dir_qstr,
                                                        bool /*is_internal*/)
-    : BaseVirtualMachine{desc.vm_name, key_provider, instance_dir_qstr},
-      desc{desc},
+    : BaseVirtualMachine{desc.vm_name, desc, key_provider, zone, instance_dir_qstr},
       name{QString::fromStdString(desc.vm_name)},
       monitor{&monitor}
 {
@@ -444,6 +446,12 @@ void mp::VirtualBoxVirtualMachine::suspend()
     monitor->on_suspend();
 }
 
+bool mp::VirtualBoxVirtualMachine::set_available(bool /*available*/)
+{
+    assert(false && "VirtualBox driver doesn't support availability zones");
+    return false;
+}
+
 mp::VirtualMachine::State mp::VirtualBoxVirtualMachine::current_state()
 {
     auto present_state = instance_state_for(name);
@@ -494,7 +502,7 @@ void mp::VirtualBoxVirtualMachine::handle_state_update()
     monitor->persist_state_for(vm_name, state);
 }
 
-std::string mp::VirtualBoxVirtualMachine::ssh_hostname(std::chrono::milliseconds /*timeout*/)
+std::string mp::VirtualBoxVirtualMachine::ssh_hostname()
 {
     return "127.0.0.1";
 }
@@ -541,15 +549,17 @@ void mp::VirtualBoxVirtualMachine::resize_memory(const MemorySize& new_size)
         name);
 }
 
-void mp::VirtualBoxVirtualMachine::resize_disk(const MemorySize& new_size)
+void mp::VirtualBoxVirtualMachine::resize_disk_impl(const MemorySize& new_size)
 {
     assert(new_size.in_bytes() > 0);
 
-    mpu::process_throw_on_error(
-        "VBoxManage",
-        {"modifyhd", desc.image.image_path, "--resizebyte", QString::number(new_size.in_bytes())},
-        "Could not resize image: {}",
-        name);
+    mpu::process_throw_on_error("VBoxManage",
+                                {"modifyhd",
+                                 MP_PLATFORM.path_to_qstr(desc.image.image_path),
+                                 "--resizebyte",
+                                 QString::number(new_size.in_bytes())},
+                                "Could not resize image: {}",
+                                name);
 }
 
 void mp::VirtualBoxVirtualMachine::add_network_interface(int index,
@@ -600,7 +610,7 @@ void mp::VirtualBoxVirtualMachine::remove_snapshots_from_backend() const
 auto multipass::VirtualBoxVirtualMachine::make_specific_snapshot(const QString& filename)
     -> std::shared_ptr<Snapshot>
 {
-    return std::make_shared<VirtualBoxSnapshot>(filename, *this, desc);
+    return std::make_shared<VirtualBoxSnapshot>(MP_PLATFORM.qstr_to_path(filename), *this, desc);
 }
 
 auto multipass::VirtualBoxVirtualMachine::make_specific_snapshot(const std::string& snapshot_name,
@@ -614,7 +624,7 @@ auto multipass::VirtualBoxVirtualMachine::make_specific_snapshot(const std::stri
                                                 comment,
                                                 instance_id,
                                                 std::move(parent),
-                                                name,
+                                                name.toStdString(),
                                                 specs,
                                                 *this);
 }

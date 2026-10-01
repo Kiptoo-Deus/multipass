@@ -109,7 +109,7 @@ auto net_digest(const QString& options)
 }
 } // namespace
 
-mp::ReturnCode cmd::Launch::run(mp::ArgParser* parser)
+mp::ReturnCodeVariant cmd::Launch::run(mp::ArgParser* parser)
 {
     petenv_name = MP_SETTINGS.get(petenv_key);
     if (auto ret = parse_args(parser); ret != ParseCode::Ok)
@@ -247,6 +247,7 @@ mp::ParseCode cmd::Launch::parse_args(mp::ArgParser* parser)
         "You can also use a shortcut of \"<name>\" to mean \"name=<name>\".",
         "spec");
     QCommandLineOption bridgedOption("bridged", "Adds one `--network bridged` network.");
+    QCommandLineOption zoneOption("zone", "The zone in which to launch the instance.", "zone");
     QCommandLineOption mountOption(
         "mount",
         QStringLiteral("Mount a local directory inside the instance. If <target> is omitted, the "
@@ -255,14 +256,17 @@ mp::ParseCode cmd::Launch::parse_args(mp::ArgParser* parser)
             .arg(home_in_instance),
         "source>:<target");
 
-    parser->addOptions({cpusOption,
-                        diskOption,
-                        memOption,
-                        nameOption,
-                        cloudInitOption,
-                        networkOption,
-                        bridgedOption,
-                        mountOption});
+    parser->addOptions({
+        cpusOption,
+        diskOption,
+        memOption,
+        nameOption,
+        cloudInitOption,
+        networkOption,
+        bridgedOption,
+        zoneOption,
+        mountOption,
+    });
 
     mp::cmd::add_instance_timeout(parser);
 
@@ -447,8 +451,10 @@ mp::ParseCode cmd::Launch::parse_args(mp::ArgParser* parser)
     try
     {
         if (parser->isSet(networkOption))
+        {
             for (const auto& net : parser->values(networkOption))
                 request.mutable_network_options()->Add(net_digest(net));
+        }
 
         request.set_timeout(mp::cmd::parse_timeout(parser));
     }
@@ -464,11 +470,26 @@ mp::ParseCode cmd::Launch::parse_args(mp::ArgParser* parser)
     return status;
 }
 
-mp::ReturnCode cmd::Launch::request_launch(const ArgParser* parser)
+mp::ReturnCodeVariant cmd::Launch::request_launch(const ArgParser* parser)
 {
     if (!spinner)
         spinner = std::make_unique<multipass::AnimatedSpinner>(
             cout); // Creating just in time to work around canonical/multipass#2075
+
+    if (parser->isSet("zone"))
+    {
+        auto zone = parser->value("zone").trimmed().toStdString();
+        if (zone.empty())
+        {
+            cerr << "Error: Empty zone specified with --zone option\n";
+            return ReturnCode::CommandLineError;
+        }
+
+        if (const auto ret = normalize_zone_name(stub, zone, cerr); ret != Ok)
+            return ret;
+
+        request.set_zone(zone);
+    }
 
     if (timer)
         timer->resume();
@@ -481,7 +502,7 @@ mp::ReturnCode cmd::Launch::request_launch(const ArgParser* parser)
         timer->start();
     }
 
-    auto on_success = [this, &parser](mp::LaunchReply& reply) {
+    auto on_success = [this, &parser](mp::LaunchReply& reply) -> ReturnCodeVariant {
         spinner->stop();
         if (timer)
             timer->pause();
@@ -500,7 +521,7 @@ mp::ReturnCode cmd::Launch::request_launch(const ArgParser* parser)
                              alias_definition,
                              cout,
                              cerr,
-                             instance_name.toStdString()) != ReturnCode::Ok)
+                             instance_name.toStdString()) == ReturnCode::Ok)
                 warning_aliases.push_back(alias_to_be_created.name());
         }
 
@@ -538,7 +559,10 @@ mp::ReturnCode cmd::Launch::request_launch(const ArgParser* parser)
             }
         }
 
-        cout << "Launched: " << reply.vm_instance_name() << "\n";
+        if (reply.zone().empty())
+            cout << "Launched: " << reply.vm_instance_name() << "\n";
+        else
+            cout << "Launched: " << reply.vm_instance_name() << " in " << reply.zone() << "\n";
 
         if (term->is_live() && update_available(reply.update_info()))
         {
@@ -550,7 +574,8 @@ mp::ReturnCode cmd::Launch::request_launch(const ArgParser* parser)
         return ReturnCode::Ok;
     };
 
-    auto on_failure = [this, &parser](grpc::Status& status, mp::LaunchReply& reply) {
+    auto on_failure = [this, &parser](grpc::Status& status,
+                                      mp::LaunchReply& reply) -> ReturnCodeVariant {
         spinner->stop();
         if (timer)
             timer->pause();
@@ -589,7 +614,11 @@ mp::ReturnCode cmd::Launch::request_launch(const ArgParser* parser)
                 error_details =
                     "Invalid network options. "
                     "To troubleshoot, see "
-                    "https://documentation.ubuntu.com/multipass/stable/how-to-guides/troubleshoot/";
+                    "https://canonical.com/multipass/docs/stable/how-to-guides/troubleshoot/";
+            }
+            else if (error == LaunchError::ZONE_UNAVAILABLE)
+            {
+                error_details = fmt::format("Unavailable zone name supplied: {}", request.zone());
             }
         }
 
@@ -597,13 +626,12 @@ mp::ReturnCode cmd::Launch::request_launch(const ArgParser* parser)
     };
 
     auto streaming_callback =
-        [this](mp::LaunchReply& reply,
-               grpc::ClientReaderWriterInterface<LaunchRequest, LaunchReply>* client) {
+        [this](LaunchReply& reply, grpc::ClientReaderWriterInterface<LaunchRequest, LaunchReply>*) {
             std::unordered_map<int, std::string> progress_messages{
-                {LaunchProgress_ProgressTypes_IMAGE, "Retrieving image: "},
-                {LaunchProgress_ProgressTypes_EXTRACT, "Extracting image: "},
-                {LaunchProgress_ProgressTypes_VERIFY, "Verifying image: "},
-                {LaunchProgress_ProgressTypes_WAITING, "Preparing image: "}};
+                {LaunchProgress_ProgressType_IMAGE, "Retrieving image: "},
+                {LaunchProgress_ProgressType_EXTRACT, "Extracting image: "},
+                {LaunchProgress_ProgressType_VERIFY, "Verifying image"},
+                {LaunchProgress_ProgressType_WAITING, "Preparing image: "}};
 
             if (!reply.log_line().empty())
             {
@@ -643,11 +671,11 @@ mp::ReturnCode cmd::Launch::request_launch(const ArgParser* parser)
 
 auto cmd::Launch::mount(const mp::ArgParser* parser,
                         const QString& mount_source,
-                        const QString& mount_target) -> ReturnCode
+                        const QString& mount_target) -> ReturnCodeVariant
 {
     const auto full_mount_target = QString{"%1:%2"}.arg(instance_name, mount_target);
     auto ret = run_cmd({"multipass", "mount", mount_source, full_mount_target}, parser, cout, cerr);
-    if (ret == Ok)
+    if (ret == ReturnCode::Ok)
         cout << fmt::format("Mounted '{}' into '{}'\n", mount_source, full_mount_target);
 
     return ret;

@@ -18,7 +18,9 @@
 #include <multipass/file_ops.h>
 #include <multipass/format.h>
 #include <multipass/logging/log.h>
+#include <multipass/platform.h>
 #include <multipass/posix.h>
+#include <multipass/utils.h>
 
 #include <chrono>
 #include <random>
@@ -150,7 +152,12 @@ void mp::FileOps::write_transactionally(const QString& file_name, const QByteArr
         std::this_thread::sleep_for(delay);
     }
 
-    assert(false && "We should never get here");
+    mp::utils::UNREACHABLE("We should never get here");
+}
+
+void mp::FileOps::write_transactionally(const fs::path& file_name, std::string_view data) const
+{
+    write_transactionally(MP_PLATFORM.path_to_qstr(file_name), data);
 }
 
 // LCOV_EXCL_START
@@ -320,7 +327,7 @@ off_t mp::FileOps::lseek(int fd, off_t offset, int whence) const
 }
 
 void mp::FileOps::open(std::fstream& stream,
-                       const char* filename,
+                       const std::filesystem::path& filename,
                        std::ios_base::openmode mode) const
 {
     stream.open(filename, mode);
@@ -335,6 +342,20 @@ std::ifstream& mp::FileOps::read(std::ifstream& file, char* buffer, std::streams
 {
     file.read(buffer, size);
     return file;
+}
+
+std::optional<std::string> mp::FileOps::try_read_file(const fs::path& filename) const
+{
+    if (std::error_code err; !MP_FILEOPS.exists(filename, err) && !err)
+        return std::nullopt;
+    else if (err)
+        throw fs::filesystem_error(
+            fmt::format("error reading file {}: {}", filename, err.message()),
+            err);
+
+    const auto file = MP_FILEOPS.open_read(filename);
+    file->exceptions(std::ifstream::failbit | std::ifstream::badbit);
+    return std::string{std::istreambuf_iterator{*file}, {}};
 }
 
 std::unique_ptr<std::ostream> mp::FileOps::open_write(const fs::path& path,
@@ -356,9 +377,32 @@ void mp::FileOps::copy(const fs::path& src,
     fs::copy(src, dist, copy_options);
 }
 
-bool mp::FileOps::exists(const fs::path& path, std::error_code& err) const
+void mp::FileOps::copy(const fs::path& src,
+                       const fs::path& dist,
+                       fs::copy_options copy_options,
+                       std::error_code& ec) const
+{
+    fs::copy(src, dist, copy_options, ec);
+}
+
+void mp::FileOps::rename(const fs::path& old_p, const fs::path& new_p) const
+{
+    fs::rename(old_p, new_p);
+}
+
+bool mp::FileOps::exists(const fs::path& path) const
+{
+    return fs::exists(path);
+}
+
+bool mp::FileOps::exists(const fs::path& path, std::error_code& err) const noexcept
 {
     return fs::exists(path, err);
+}
+
+bool mp::FileOps::is_symlink(const fs::path& path) const
+{
+    return fs::is_symlink(path);
 }
 
 bool mp::FileOps::is_directory(const fs::path& path, std::error_code& err) const
@@ -376,7 +420,12 @@ bool mp::FileOps::create_directories(const fs::path& path, std::error_code& err)
     return fs::create_directories(path, err);
 }
 
-bool mp::FileOps::remove(const fs::path& path, std::error_code& err) const
+bool mp::FileOps::remove(const fs::path& path) const
+{
+    return fs::remove(path);
+}
+
+bool mp::FileOps::remove(const fs::path& path, std::error_code& err) const noexcept
 {
     return fs::remove(path, err);
 }
@@ -418,6 +467,24 @@ std::unique_ptr<mp::DirIterator> mp::FileOps::dir_iterator(const fs::path& path,
 fs::path mp::FileOps::weakly_canonical(const fs::path& path) const
 {
     return fs::weakly_canonical(path);
+}
+
+fs::path mp::FileOps::relative(const fs::path& path,
+                               const fs::path& base,
+                               std::error_code& ec) const
+{
+    return fs::relative(path, base, ec);
+}
+
+// TODO hyperv migration, remove (file_size and space)
+std::uintmax_t mp::FileOps::file_size(const fs::path& path, std::error_code& err) const
+{
+    return fs::file_size(path, err);
+}
+
+fs::space_info mp::FileOps::space(const fs::path& path, std::error_code& err) const
+{
+    return fs::space(path, err);
 }
 
 fs::path mp::FileOps::remove_extension(const fs::path& path) const

@@ -7,23 +7,26 @@ This document demonstrates how to choose, set up, and manage the drivers behind 
 
 ## Default driver
 
-`````{tabs}
+`````{tab-set}
 
-````{group-tab} Linux
+````{tab-item} Linux
+:sync: Linux
 
 By default, Multipass on Linux uses the `qemu` driver.
 
 ````
 
-````{group-tab} macOS
+````{tab-item} macOS
+:sync: macOS
 
 By default, Multipass on macOS uses the `qemu` driver.
 
 ````
 
-````{group-tab} Windows
+````{tab-item} Windows
+:sync: Windows
 
-By default, Multipass on Windows uses the `hyperv` driver.
+By default, Multipass on Windows uses the `hcs` driver.
 
 ````
 
@@ -31,27 +34,68 @@ By default, Multipass on Windows uses the `hyperv` driver.
 
 ## Install an alternative driver
 
-`````{tabs}
+`````{tab-set}
 
-````{group-tab} macOS
+````{tab-item} Linux
+:sync: Linux
 
-An alternative option is to use VirtualBox.
+On Linux, only the `qemu` driver is supported, so switching `local.driver` is not possible.
+
+````
+
+````{tab-item} macOS
+:sync: macOS
+
+An alternative option is to use the Apple Virtualization framework.
+
+To switch the Multipass driver to the Apple Virtualization framework, run this command:
+
+```{code-block} text
+multipass set local.driver=applevz
+```
+
+From now on, all instances started with `multipass launch` will use the Apple Virtualization framework behind the scenes.
+
+On Intel/x86 architectures, an additional option is to use VirtualBox.
+
+```{note}
+VirtualBox is deprecated as of Multipass 1.17 and will be removed in a future release, with no migration planned. See [Move from VirtualBox to another driver](/how-to-guides/customise-multipass/move-from-virtualbox-to-another-driver).
+```
 
 To switch the Multipass driver to VirtualBox, run this command:
 
 ```{code-block} text
-sudo multipass set local.driver=virtualbox
+multipass set local.driver=virtualbox
 ```
 
 From now on, all instances started with `multipass launch` will use VirtualBox behind the scenes.
 
 ````
 
-````{group-tab} Windows
+````{tab-item} Windows
+:sync: Windows
 
-If you want to (or have to), you can change the hypervisor that Multipass uses to VirtualBox.
+You can change the hypervisor that Multipass uses to Hyper-V or VirtualBox.
 
-To that end, install VirtualBox, if you haven't yet. You may find that you need to <a href="https://forums.virtualbox.org/viewtopic.php?f=6&t=88405#p423658">run the VirtualBox installer as administrator</a>.
+```{note}
+The Hyper-V driver is deprecated as of Multipass version 1.17 (see
+[Migrate from Hyper-V to the HCS driver on Windows](/how-to-guides/customise-multipass/migrate-from-hyperv-to-hcs-on-windows)).
+
+VirtualBox is deprecated as of Multipass 1.17 and will be removed in a future release, with no
+migration planned. See
+[Move from VirtualBox to another driver](/how-to-guides/customise-multipass/move-from-virtualbox-to-another-driver).
+```
+
+To switch the Multipass driver to Hyper-V, run this command:
+
+```{code-block} powershell
+multipass set local.driver=hyperv
+```
+
+From then on, all instances started with multipass launch will use Hyper-V behind the scenes.
+
+To use VirtualBox, you first have to install VirtualBox. You may find that you need to
+<a href="https://forums.virtualbox.org/viewtopic.php?f=6&t=88405#p423658">run the VirtualBox installer as administrator</a>.
 
 <!-- Sphinx doesn't like the & character in the above link, the only way to make it work is using basic HTML syntax. The link was:
 [run the VirtualBox installer as administrator](https://forums.virtualbox.org/viewtopic.php?f=6&t=88405#p423658)
@@ -69,43 +113,70 @@ From then on, all instances started with `multipass launch` will use VirtualBox 
 
 `````
 
-## Use the driver to view Multipass instances
+## Switch back to the default driver
 
-`````{tabs}
+> See also: {ref}`reference-command-line-interface-stop`, {ref}`reference-settings-local-driver`
 
-````{group-tab} Linux
+`````{tab-set}
 
-You can view instances with libvirt in two ways, using the `virsh` CLI or the [`virt-manager` GUI](https://virt-manager.org/).
+````{tab-item} Linux
+:sync: Linux
 
-To use the `virsh` CLI, launch an instance and then run the command `virsh list` (see [`man virsh`](https://manpages.ubuntu.com/manpages/questing/en/man1/virsh.1.html) for a command reference):
-
-```{code-block} text
-virsh list
-```
-
-The output will be similar to the following:
-
-```{code-block} text
- Id   Name                   State
---------------------------------------
- 1    unaffected-gyrfalcon   running
-```
-Alternatively, to use the `virt-manager` GUI, ...
-
-```{figure} /images/multipass-virt-manager-gui.png
-   :width: 584px
-   :alt: Virtual Machine Manager GUI
-```
-
-<!-- Original image on the Asset Manager
-![Virtual Machine Manager GUI|584x344](https://assets.ubuntu.com/v1/51cf2c57-multipass-virt-manager-gui.png)
--->
+On Linux, there is only one driver and changing it is not possible.
 
 ````
 
-````{group-tab} macOS
+````{tab-item} macOS
+:sync: macOS
 
-Multipass runs as the `root` user, so to see the instances in  VirtualBox, or through the `VBoxManage` command, you have to run those as `root`, too. To see the instances in VirtualBox, use the command:
+If you want to switch back to the default driver, run:
+
+```{code-block} text
+multipass set local.driver=qemu
+```
+
+Instances are tied to the driver they were created with; after switching, they won't be visible until you switch back.
+
+````
+
+````{tab-item} Windows
+:sync: Windows
+
+If you want to switch back to the default driver:
+
+```{code-block} powershell
+multipass set local.driver=hcs
+```
+
+Instances are tied to the driver they were created with; after switching, they won't be visible until you switch back.
+
+````
+
+`````
+
+## Use VirtualBox to view Multipass instances
+
+```{note}
+VirtualBox is deprecated as of Multipass 1.17 (see [Move from VirtualBox to another driver](/how-to-guides/customise-multipass/move-from-virtualbox-to-another-driver)). This section, and the two below, remain useful for as long as you keep using it.
+```
+
+`````{tab-set}
+
+````{tab-item} Linux
+:sync: Linux
+
+This option does not apply to Linux systems.
+
+````
+
+````{tab-item} macOS
+:sync: macOS
+
+```{note}
+The VirtualBox driver is only available on Intel/x86 architectures.
+```
+
+Multipass runs as the `root` user, so to see the instances in VirtualBox, or through the `VBoxManage` command, you have to run those as `root`, too. To see the instances in VirtualBox, use the command:
 
 ```{code-block} text
 sudo VirtualBox
@@ -137,7 +208,8 @@ You can still use the `multipass` client and the system menu icon, and any chang
 
 ````
 
-````{group-tab} Windows
+````{tab-item} Windows
+:sync: Windows
 
 Multipass runs as the _System_ account, so to see the instances in VirtualBox, or through the `VBoxManage` command, you have to run those as that user via [`PsExec -s`](https://docs.microsoft.com/en-us/sysinternals/downloads/psexec). Download and unpack [PSTools.zip](https://download.sysinternals.com/files/PSTools.zip) in your *Downloads* folder, and in an administrative PowerShell, run:
 
@@ -177,15 +249,17 @@ You can still use the `multipass` client and the system menu icon, and any chang
 
 ## Use VirtualBox to set up port forwarding for a Multipass instance
 
-`````{tabs}
+`````{tab-set}
 
-````{group-tab} Linux
+````{tab-item} Linux
+:sync: Linux
 
 This option only applies to macOS and Windows systems.
 
 ````
 
-````{group-tab} macOS
+````{tab-item} macOS
+:sync: macOS
 
 To expose a service running inside the instance on your host, you can use [VirtualBox's port forwarding feature](https://www.virtualbox.org/manual/ch06.html#natforward), for example:
 
@@ -197,7 +271,8 @@ You can then open, say, https://localhost:8081/, and the service running inside 
 
 ````
 
-````{group-tab} Windows
+````{tab-item} Windows
+:sync: Windows
 
 To expose a service running inside the instance on your host, you can use [VirtualBox's port forwarding feature](https://www.virtualbox.org/manual/ch06.html#natforward), for example:
 
@@ -213,15 +288,17 @@ You can then open, say, https://localhost:8081/, and the service running inside 
 
 ## Use VirtualBox to set up network bridging for a Multipass instance
 
-`````{tabs}
+`````{tab-set}
 
-````{group-tab} Linux
+````{tab-item} Linux
+:sync: Linux
 
-This option only applies to macOS systems.
+This option only applies to macOS and Windows systems.
 
 ````
 
-````{group-tab} macOS
+````{tab-item} macOS
+:sync: macOS
 
 An often requested Multipass feature is network bridging. You can add a second network interface to the instance and expose it on your physical network.
 
@@ -312,55 +389,10 @@ All the services running inside the instance should now be available on your phy
 
 ````
 
-````{group-tab} Windows
+````{tab-item} Windows
+:sync: Windows
 
 This option only applies to macOS systems.
-
-````
-
-`````
-
-## Switch back to the default driver
-
-> See also: {ref}`reference-command-line-interface-stop`, {ref}`reference-settings-local-driver`
-
-`````{tabs}
-
-````{group-tab} Linux
-
-To switch back to the default `qemu` driver, first you need to stop all instances again:
-
-```{code-block} text
-multipass stop --all
-multipass set local.driver=qemu
-```
-
-Here, too, existing instances will be migrated.
-
-
-````
-
-````{group-tab} macOS
-
-If you want to switch back to the default driver, run:
-
-```{code-block} text
-multipass set local.driver=qemu
-```
-
-Instances created with VirtualBox don't get transferred, but you can always come back to them.
-
-````
-
-````{group-tab} Windows
-
-If you want to switch back to the default driver:
-
-```{code-block} text
-multipass set local.driver=hyperv
-```
-
-Instances created with VirtualBox don't get transferred, but you can always come back to them.
 
 ````
 

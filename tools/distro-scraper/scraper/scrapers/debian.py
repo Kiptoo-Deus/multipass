@@ -2,12 +2,12 @@ import base64
 import aiohttp
 import asyncio
 from email.parser import Parser
-from ..base import BaseScraper
+from ..base import BaseScraper, make_session
+from ..models import SUPPORTED_ARCHITECTURES
 
 RELEASE_FILE_URL = "https://deb.debian.org/debian/dists/stable/Release"
 MANIFEST_URL_TEMPLATE = "https://cloud.debian.org/images/cloud/{codename}/latest/debian-{version}-generic-{arch}.json"
 IMAGE_BASE_URL = "https://cloud.debian.org/images/cloud/"
-DEFAULT_TIMEOUT = 10
 
 
 class DebianScraper(BaseScraper):
@@ -36,32 +36,6 @@ class DebianScraper(BaseScraper):
                 return item
         return None
 
-    async def _fetch_text(
-        self, session: aiohttp.ClientSession, url: str, timeout: int = DEFAULT_TIMEOUT
-    ) -> str:
-        """
-        GET a URL and return its text. Raises aiohttp.ClientError on bad response.
-        """
-        self.logger.info("Fetching Debian releases from %s", url)
-        async with session.get(
-            url, timeout=aiohttp.ClientTimeout(total=timeout)
-        ) as resp:
-            resp.raise_for_status()
-            return await resp.text()
-
-    async def _fetch_json(
-        self, session: aiohttp.ClientSession, url: str, timeout: int = DEFAULT_TIMEOUT
-    ) -> dict:
-        """
-        GET a URL and return JSON-decoded content.
-        """
-        self.logger.info("Fetching Debian manifest from %s", url)
-        async with session.get(
-            url, timeout=aiohttp.ClientTimeout(total=timeout)
-        ) as resp:
-            resp.raise_for_status()
-            return await resp.json()
-
     def _parse_release_file(self, content: str) -> tuple[str, str]:
         """
         Parse RFC822-style Release file and return important fields.
@@ -76,28 +50,6 @@ class DebianScraper(BaseScraper):
             "Parsed Release file: Version=%s, Codename=%s", version, codename
         )
         return version, codename
-
-    async def _head_content_length(
-        self, session: aiohttp.ClientSession, url: str, timeout: int = DEFAULT_TIMEOUT
-    ) -> int | None:
-        """
-        HEAD the URL and return Content-Length as int if present, otherwise None.
-
-        Raises aiohttp.ClientError on non-2xx responses.
-        """
-        self.logger.info("Sending HEAD request to %s", url)
-        async with session.head(
-            url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=timeout)
-        ) as resp:
-            resp.raise_for_status()
-            length = resp.headers.get("Content-Length")
-            if length is None:
-                return None
-            try:
-                return int(length)
-            except (TypeError, ValueError):
-                self.logger.warning("Invalid Content-Length header: %s", length)
-                return None
 
     def _decode_sha512_b64_to_hex(self, digest_annotation: str | None) -> str | None:
         """
@@ -134,27 +86,39 @@ class DebianScraper(BaseScraper):
         """
         Fetch image manifests for known arches and build the items mapping.
 
-        Preserves original mapping and output structure.
+        Iterates over SUPPORTED_ARCHITECTURES, maps through arch_map for scraping,
+        but returns data under original SUPPORTED_ARCHITECTURES keys.
         """
+        # Map SUPPORTED_ARCHITECTURES to Debian-specific architecture names
         arch_map = {
-            "amd64": "x86_64",
-            "arm64": "arm64",
+            "x86_64": "amd64",
+            "power64le": "ppc64el",
         }
+
+        # Build list of (original_arch, mapped_arch) tuples for SUPPORTED_ARCHITECTURES
+        arch_pairs = [
+            (arch, arch_map.get(arch, arch))
+            for arch in SUPPORTED_ARCHITECTURES
+        ]
 
         # Fetch all manifests concurrently
         manifest_urls = [
-            MANIFEST_URL_TEMPLATE.format(codename=codename, version=version, arch=arch)
-            for arch in arch_map.keys()
+            MANIFEST_URL_TEMPLATE.format(codename=codename, version=version, arch=mapped_arch)
+            for _, mapped_arch in arch_pairs
         ]
         manifests = await asyncio.gather(
             *[self._fetch_json(session, url) for url in manifest_urls]
         )
 
         items: dict[str, dict] = {}
-        for (arch, label), manifest in zip(arch_map.items(), manifests):
+        for (original_arch, mapped_arch), manifest in zip(arch_pairs, manifests):
+            if manifest is None:
+                self.logger.info("Skipping %s: manifest not available", mapped_arch)
+                continue
+
             upload_item = self._find_qcow2_upload(manifest)
             if not upload_item:
-                self.logger.info("No qcow2 upload found for %s %s", codename, arch)
+                self.logger.info("No qcow2 upload found for %s %s", codename, mapped_arch)
                 continue
 
             metadata = upload_item.get("metadata", {})
@@ -165,7 +129,7 @@ class DebianScraper(BaseScraper):
             image_ref = data.get("ref")
             if not image_ref:
                 self.logger.warning(
-                    "Upload item missing data.ref for %s %s", codename, arch
+                    "Upload item missing data.ref for %s %s", codename, mapped_arch
                 )
                 continue
 
@@ -181,7 +145,8 @@ class DebianScraper(BaseScraper):
             if raw_version_label:
                 short_version = raw_version_label.split("-")[0]
 
-            items[label] = {
+            # Store under original SUPPORTED_ARCHITECTURES key
+            items[original_arch] = {
                 "image_location": image_url,
                 "id": sha512_hex,
                 "version": short_version,
@@ -194,7 +159,7 @@ class DebianScraper(BaseScraper):
         """
         Fetch Debian Cloud images and return normalized metadata.
         """
-        async with aiohttp.ClientSession() as session:
+        async with make_session() as session:
             release_text = await self._fetch_text(session, RELEASE_FILE_URL)
 
             raw_version, codename = self._parse_release_file(release_text)

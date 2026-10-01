@@ -32,8 +32,8 @@ constexpr auto daily_remote = "daily";
 constexpr auto snapcraft_remote = "snapcraft";
 constexpr auto core_remote = "core";
 
-constexpr auto min_memory_size = "128M";
-constexpr auto min_disk_size = "512M";
+constexpr auto min_memory_size = "512M";
+constexpr auto min_disk_size = "1G";
 constexpr auto min_cpu_cores = "1";
 
 constexpr auto default_memory_size = "1G";
@@ -75,4 +75,10 @@ constexpr auto petenv_default = "primary";
 constexpr auto timeout_exit_code = 5;
 constexpr auto authenticated_certs_dir = "authenticated-certs";
 constexpr auto home_in_instance = "/home/ubuntu";
+
+constexpr std::chrono::milliseconds vm_shutdown_timeout =
+    300000ms; // unit: ms, 5 minute timeout for shutdown/suspend
+constexpr auto default_ssh_port = 22;
+constexpr auto default_zone_names = {"zone1", "zone2", "zone3"};
+constexpr auto default_grpc_server_tcp_listen_address = "localhost:25051";
 } // namespace multipass

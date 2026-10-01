@@ -23,14 +23,20 @@
 #include <multipass/exceptions/virtual_machine_state_exceptions.h>
 #include <multipass/ip_address.h>
 #include <multipass/logging/log.h>
-#include <multipass/ssh/ssh_session.h>
+#include <multipass/platform.h>
+#include <multipass/ssh/libssh_wrapper.h>
+#include <multipass/ssh/plain_ssh_session.h>
 #include <multipass/top_catch_all.h>
 #include <multipass/utils.h>
 #include <multipass/virtual_machine_description.h>
 #include <multipass/vm_specs.h>
 #include <multipass/vm_status_monitor.h>
+#include <shared/windows/net_io_api.h>
+#include <shared/windows/network_utils.h>
 #include <shared/windows/powershell.h>
 #include <shared/windows/smb_mount_handler.h>
+
+#include <QUuid>
 
 #include <fmt/format.h>
 
@@ -51,17 +57,24 @@ QString quoted(const QString& str)
     return '"' + str + '"';
 }
 
+NET_LUID to_net_luid(std::uint64_t value)
+{
+    NET_LUID luid{};
+    luid.Value = value;
+    return luid;
+}
+
 std::optional<mp::IPAddress> remote_ip(const std::string& host,
                                        int port,
                                        const std::string& username,
                                        const mp::SSHKeyProvider& key_provider)
 try
 {
-    mp::SSHSession session{host, port, username, key_provider};
+    mp::PlainSSHSession session{host, port, username, key_provider};
 
     sockaddr_in addr{};
     int size = sizeof(addr);
-    auto socket = ssh_get_fd(session);
+    auto socket = MP_LIBSSH.ssh_get_fd(session);
     const auto failed = getpeername(socket, reinterpret_cast<sockaddr*>(&addr), &size);
 
     if (failed)
@@ -147,13 +160,14 @@ fs::path locate_vmcx_file(const fs::path& exported_vm_dir_path)
 mp::HyperVVirtualMachine::HyperVVirtualMachine(const VirtualMachineDescription& desc,
                                                VMStatusMonitor& monitor,
                                                const SSHKeyProvider& key_provider,
+                                               AvailabilityZone& zone,
                                                const mp::Path& instance_dir)
-    : HyperVVirtualMachine{desc, monitor, key_provider, instance_dir, true}
+    : HyperVVirtualMachine{desc, monitor, key_provider, zone, instance_dir, true}
 {
     if (!power_shell->run({"Get-VM", "-Name", name}))
     {
-        auto mem_size =
-            QString::number(desc.mem_size.in_bytes()); /* format documented in `Help(New-VM)`, under
+        auto mem_size = QString::number(
+            desc.mem_size.in_bytes()); /* format documented in `Help(New-VM)`, under
 `-MemoryStartupBytes` option; */
 
         power_shell->easy_run({QString("$switch = Get-VMSwitch -Id %1").arg(default_switch_guid)},
@@ -165,7 +179,7 @@ mp::HyperVVirtualMachine::HyperVVirtualMachine(const VirtualMachineDescription& 
                                "-Generation",
                                "2",
                                "-VHDPath",
-                               '"' + desc.image.image_path + '"',
+                               '"' + MP_PLATFORM.path_to_qstr(desc.image.image_path) + '"',
                                "-BootDevice",
                                "VHD",
                                "-SwitchName",
@@ -201,8 +215,9 @@ mp::HyperVVirtualMachine::HyperVVirtualMachine(const std::string& source_vm_name
                                                const VirtualMachineDescription& desc,
                                                VMStatusMonitor& monitor,
                                                const SSHKeyProvider& key_provider,
+                                               AvailabilityZone& zone,
                                                const Path& dest_instance_dir)
-    : HyperVVirtualMachine{desc, monitor, key_provider, dest_instance_dir, true}
+    : HyperVVirtualMachine{desc, monitor, key_provider, zone, dest_instance_dir, true}
 {
     // 1. Export-VM -Name vm1 -Path C:\ProgramData\Multipass\data\vault\instances\vm1-clone1
     power_shell->easy_run({"Export-VM",
@@ -216,8 +231,8 @@ mp::HyperVVirtualMachine::HyperVVirtualMachine(const std::string& source_vm_name
     // 'C:\ProgramData\Multipass\data\vault\instances\vm1-clone1\vm1\Virtual
     // Machines\7735327A-A22F-4926-95A1-51757D650BB7.vmcx' -Copy -GenerateNewId -VhdDestinationPath
     // "C:\ProgramData\Multipass\data\vault\instances\vm1-clone1\"
-    const fs::path exported_vm_path =
-        fs::path{dest_instance_dir.toStdString()} / fs::path{source_vm_name};
+    const fs::path exported_vm_path = fs::path{dest_instance_dir.toStdString()} /
+                                      fs::path{source_vm_name};
     const fs::path vmcx_file_path = locate_vmcx_file(exported_vm_path);
     // The next step needs to rename the instance, so we need to store the instance variable
     // $imported_vm from the Import-VM step. Because we can not use vm name to uniquely identify the
@@ -245,8 +260,8 @@ mp::HyperVVirtualMachine::HyperVVirtualMachine(const std::string& source_vm_name
         "Could not remove the cloud-init-config.iso file from the virtual machine");
     // 5. Add-VMDvdDrive -VMName vm1-clone1 -Path
     // 'C:\ProgramData\Multipass\data\vault\instances\vm1-clone1\cloud-init-config.iso'
-    const fs::path dest_cloud_init_path =
-        fs::path{dest_instance_dir.toStdString()} / cloud_init_file_name;
+    const fs::path dest_cloud_init_path = fs::path{dest_instance_dir.toStdString()} /
+                                          cloud_init_file_name;
     power_shell->easy_run({"Add-VMDvdDrive",
                            "-VMName",
                            name,
@@ -265,10 +280,10 @@ mp::HyperVVirtualMachine::HyperVVirtualMachine(const std::string& source_vm_name
 mp::HyperVVirtualMachine::HyperVVirtualMachine(const VirtualMachineDescription& desc,
                                                VMStatusMonitor& monitor,
                                                const SSHKeyProvider& key_provider,
+                                               AvailabilityZone& zone,
                                                const Path& instance_dir,
                                                bool /*is_internal*/)
-    : BaseVirtualMachine{desc.vm_name, key_provider, instance_dir},
-      desc{desc},
+    : BaseVirtualMachine{desc.vm_name, desc, key_provider, zone, instance_dir},
       name{QString::fromStdString(desc.vm_name)},
       power_shell{std::make_unique<PowerShell>(vm_name)},
       monitor{&monitor}
@@ -339,6 +354,16 @@ mp::HyperVVirtualMachine::~HyperVVirtualMachine()
 
 void mp::HyperVVirtualMachine::start()
 {
+    const auto present_state = current_state();
+    if (present_state == State::off || present_state == State::stopped)
+    {
+        default_switch_interface = resolve_default_switch_interface();
+        const auto switch_interface = default_switch_interface.load();
+        if (!switch_interface || !remove_permanent_ipv4_neighbors(desc.default_mac_address,
+                                                                  to_net_luid(*switch_interface)))
+            mpl::warn(vm_name, "Could not remove all stale management IP entries");
+    }
+
     state = State::starting;
     handle_state_update();
 
@@ -404,12 +429,21 @@ void mp::HyperVVirtualMachine::suspend()
             handle_state_update();
         }
     }
-    else if (present_state == State::stopped)
+    else if (present_state == State::stopped || present_state == State::unavailable)
     {
-        mpl::info(vm_name, "Ignoring suspend issued while stopped");
+        // TODO: format state directly
+        mpl::info(vm_name,
+                  "Ignoring suspend since instance is {}",
+                  (present_state == State::unavailable) ? "unavailable" : "stopped");
     }
 
     monitor->on_suspend();
+}
+
+bool mp::HyperVVirtualMachine::set_available(bool /*available*/)
+{
+    assert(false && "Hyper-V driver doesn't support availability zones");
+    return false;
 }
 
 mp::VirtualMachine::State mp::HyperVVirtualMachine::current_state()
@@ -426,7 +460,7 @@ mp::VirtualMachine::State mp::HyperVVirtualMachine::current_state()
 
 int mp::HyperVVirtualMachine::ssh_port()
 {
-    return 22;
+    return default_ssh_port;
 }
 
 void mp::HyperVVirtualMachine::handle_state_update()
@@ -442,9 +476,9 @@ void mp::HyperVVirtualMachine::handle_state_update()
     monitor->persist_state_for(vm_name, state);
 }
 
-std::string mp::HyperVVirtualMachine::ssh_hostname(std::chrono::milliseconds /*timeout*/)
+std::string mp::HyperVVirtualMachine::ssh_hostname()
 {
-    return name.toStdString() + ".mshome.net";
+    return require_management_ipv4().as_string();
 }
 
 std::string mp::HyperVVirtualMachine::ssh_username()
@@ -454,14 +488,64 @@ std::string mp::HyperVVirtualMachine::ssh_username()
 
 std::optional<mp::IPAddress> mp::HyperVVirtualMachine::management_ipv4()
 {
-    // Not using cached SSH session for this because a) the underlying functions do not
-    // guarantee constness; b) we endure the penalty of creating a new session only when we
-    // don't have the IP yet.
-    if (!management_ip)
-        management_ip =
-            remote_ip(VirtualMachine::ssh_hostname(), ssh_port(), ssh_username(), key_provider);
+    if (!default_switch_interface.load())
+        default_switch_interface = resolve_default_switch_interface();
 
-    return management_ip;
+    const auto switch_interface = default_switch_interface.load();
+    if (!switch_interface)
+        return std::nullopt;
+
+    if (const auto ip_address = permanent_ipv4_neighbor(desc.default_mac_address,
+                                                        to_net_luid(*switch_interface)))
+    {
+        IPAddress address{*ip_address};
+        mpl::trace(get_name(), "management_ipv4() > IP address is `{}`", address.as_string());
+        return address;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::uint64_t> mp::HyperVVirtualMachine::resolve_default_switch_interface()
+{
+    // All AZ networks share the Default Switch's vSwitch, so the switch ID alone is ambiguous.
+    // HNS names each host vNIC after its network, and the Default Switch network has the same ID
+    // as the switch itself.
+    QString device_id;
+    if (!power_shell->run({"Get-VMNetworkAdapter",
+                           "-ManagementOS",
+                           "-Name",
+                           QStringLiteral("'Host Vnic %1'").arg(default_switch_guid),
+                           "|",
+                           "Select-Object",
+                           "-ExpandProperty",
+                           "DeviceId"},
+                          &device_id,
+                          nullptr,
+                          /* whisper = */ true))
+    {
+        mpl::warn(vm_name, "Could not find the Default Switch host interface");
+        return std::nullopt;
+    }
+
+    const QUuid interface_guid{device_id.trimmed()};
+    if (interface_guid.isNull())
+    {
+        mpl::warn(vm_name, "Unexpected Default Switch host interface ID: `{}`", device_id);
+        return std::nullopt;
+    }
+
+    const GUID guid = interface_guid;
+    NET_LUID luid{};
+    if (const auto error = MP_NETIOAPI.ConvertInterfaceGuidToLuid(&guid, &luid); error != NO_ERROR)
+    {
+        mpl::warn(vm_name,
+                  "Could not get the LUID of Default Switch host interface `{}`, error code {}",
+                  device_id,
+                  error);
+        return std::nullopt;
+    }
+
+    return luid.Value;
 }
 
 void mp::HyperVVirtualMachine::update_cpus(int num_cores)
@@ -485,7 +569,7 @@ void mp::HyperVVirtualMachine::resize_memory(const MemorySize& new_size)
     power_shell->easy_run(resize_cmd, "Could not resize memory");
 }
 
-void mp::HyperVVirtualMachine::resize_disk(const MemorySize& new_size)
+void mp::HyperVVirtualMachine::resize_disk_impl(const MemorySize& new_size)
 {
     assert(new_size.in_bytes() > 0);
 
@@ -539,7 +623,7 @@ auto mp::HyperVVirtualMachine::make_specific_snapshot(const std::string& snapsho
                                             instance_id,
                                             specs,
                                             std::move(parent),
-                                            name,
+                                            name.toStdString(),
                                             *this,
                                             *power_shell);
 }
@@ -547,5 +631,8 @@ auto mp::HyperVVirtualMachine::make_specific_snapshot(const std::string& snapsho
 auto mp::HyperVVirtualMachine::make_specific_snapshot(const QString& filename)
     -> std::shared_ptr<Snapshot>
 {
-    return std::make_shared<HyperVSnapshot>(filename, *this, desc, *power_shell);
+    return std::make_shared<HyperVSnapshot>(MP_PLATFORM.qstr_to_path(filename),
+                                            *this,
+                                            desc,
+                                            *power_shell);
 }

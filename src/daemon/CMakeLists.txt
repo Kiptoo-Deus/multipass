@@ -25,6 +25,15 @@ add_library(daemon STATIC
   runtime_instance_info_helper.cpp
   snapshot_settings_handler.cpp)
 
+# TODO hyperv migration, remove
+if(HCS_ENABLED)
+  target_compile_definitions(daemon PRIVATE HCS_ENABLED)
+  target_sources(daemon PRIVATE
+    hyperv_driver_transition.cpp
+    hyperv_migration.cpp)
+  target_link_libraries(daemon hyperv_migration hcs_backend)
+endif()
+
 include_directories(daemon
   ${CMAKE_SOURCE_DIR}/src/platform/backends)
 
@@ -34,7 +43,7 @@ target_link_libraries(daemon
   fmt::fmt-header-only
   image_host
   logger
-  petname
+  namegen
   platform
   rpc
   settings
@@ -58,7 +67,14 @@ target_link_libraries(delayed_shutdown
 )
 
 if(MSVC)
-  add_executable(multipassd daemon_main_win.cpp)
+  prepare_windows_version_resource(
+    MULTIPASSD_RC_SOURCE
+    multipassd
+    "Multipass Daemon"
+    "multipassd"
+    "multipassd.exe"
+  )
+  add_executable(multipassd daemon_main_win.cpp ${MULTIPASSD_RC_SOURCE})
   qt6_disable_unicode_defines(multipassd)
 else()
   add_executable(multipassd daemon_main.cpp)

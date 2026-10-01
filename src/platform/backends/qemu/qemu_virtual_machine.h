@@ -46,6 +46,7 @@ public:
                        QemuPlatform* qemu_platform,
                        VMStatusMonitor& monitor,
                        const SSHKeyProvider& key_provider,
+                       AvailabilityZone& zone,
                        const Path& instance_dir,
                        bool remove_snapshots = false);
     ~QemuVirtualMachine();
@@ -55,14 +56,13 @@ public:
     void suspend() override;
     State current_state() override;
     int ssh_port() override;
-    std::string ssh_hostname(std::chrono::milliseconds timeout) override;
+    std::string ssh_hostname() override;
     std::string ssh_username() override;
     std::optional<IPAddress> management_ipv4() override;
     void wait_until_ssh_up(std::chrono::milliseconds timeout) override;
     void handle_state_update() override;
     void update_cpus(int num_cores) override;
     void resize_memory(const MemorySize& new_size) override;
-    void resize_disk(const MemorySize& new_size) override;
     virtual void add_network_interface(int index,
                                        const std::string& default_mac_addr,
                                        const NetworkInterface& extra_interface) override;
@@ -78,8 +78,9 @@ protected:
     // TODO remove this, the onus of composing a VM of stubs should be on the stub VMs
     QemuVirtualMachine(const std::string& name,
                        const SSHKeyProvider& key_provider,
+                       AvailabilityZone& zone,
                        const Path& instance_dir)
-        : BaseVirtualMachine{name, key_provider, instance_dir}
+        : BaseVirtualMachine{name, {}, key_provider, zone, instance_dir}
     {
     }
 
@@ -89,6 +90,7 @@ protected:
                                                      const std::string& instance_id,
                                                      const VMSpecs& specs,
                                                      std::shared_ptr<Snapshot> parent) override;
+    void resize_disk_impl(const MemorySize& new_size) override;
 
     bool unplugged() override;
     void refresh_start() override;
@@ -103,11 +105,8 @@ private:
 
     void connect_vm_signals();
     void disconnect_vm_signals();
-    void fetch_ip(std::chrono::milliseconds timeout);
-
     void remove_snapshots_from_backend() const;
 
-    VirtualMachineDescription desc;
     std::unique_ptr<Process> vm_process{nullptr};
     QemuPlatform* qemu_platform;
     VMStatusMonitor* monitor;

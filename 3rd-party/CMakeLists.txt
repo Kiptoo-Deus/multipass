@@ -25,15 +25,13 @@ target_link_libraries(gRPC INTERFACE
   protobuf::libprotobuf)
 
 if (NOT MSVC)
-  target_compile_options(gRPC INTERFACE "-Wno-unused-parameter" "-Wno-non-virtual-dtor" "-Wno-pedantic")
+  target_compile_options(gRPC INTERFACE
+    "-Wno-unused-parameter"
+    "-Wno-non-virtual-dtor"
+    "-Wno-pedantic")
 endif ()
 
 include(ExternalProject)
-
-# QEMU itself
-if (APPLE AND "qemu" IN_LIST MULTIPASS_BACKENDS)
-    add_subdirectory(qemu SYSTEM)
-endif ()
 
 if(MSVC)
   set(JSONCPP_WITH_PKGCONFIG_SUPPORT OFF CACHE BOOL "Disable pkgconfig in jsoncpp" FORCE)
@@ -42,13 +40,7 @@ if(MSVC)
   add_subdirectory(jsoncpp SYSTEM)
 endif()
 
-# libssh config
-add_subdirectory(libssh SYSTEM)
-
 # premock header only library to mock c-functions
 add_library(premock INTERFACE)
 target_include_directories(premock INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/premock)
-
-# xz-decoder config
-add_subdirectory(xz-decoder SYSTEM EXCLUDE_FROM_ALL)

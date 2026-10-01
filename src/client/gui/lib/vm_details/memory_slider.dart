@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../colors.dart';
 import '../dropdown.dart';
 import '../extensions.dart';
 import '../ffi.dart';
+import '../l10n/app_localizations.dart';
 import 'mapping_slider.dart';
 
 class MemorySlider extends StatefulWidget {
@@ -70,6 +72,7 @@ class _MemorySliderState extends State<MemorySlider> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final textField = TextField(
       controller: controller,
       enabled: widget.enabled,
@@ -137,10 +140,11 @@ class _MemorySliderState extends State<MemorySlider> {
               const SizedBox(height: 25),
               Row(
                 children: [
-                  const Icon(Icons.warning_rounded, color: Color(0xffCC7900)),
+                  const Icon(Icons.warning_rounded, color: warningAmber),
                   const SizedBox(width: 5),
                   Text(
-                    'Over-provisioning of ${widget.label.toLowerCase()}',
+                    l10n.memorySliderOverProvisioning(
+                        widget.label.toLowerCase()),
                     style: const TextStyle(fontSize: 16),
                   ),
                 ],

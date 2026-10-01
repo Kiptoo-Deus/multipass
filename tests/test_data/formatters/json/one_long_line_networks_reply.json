@@ -1,9 +1,0 @@
-{
-    "list": [
-        {
-            "description": "Amazingly fast and robust ethernet adapter",
-            "name": "enp3s0",
-            "type": "ethernet"
-        }
-    ]
-}

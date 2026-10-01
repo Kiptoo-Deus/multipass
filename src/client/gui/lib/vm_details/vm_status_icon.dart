@@ -2,6 +2,7 @@ import 'package:flutter/material.dart' hide Tooltip;
 
 import '../extensions.dart';
 import '../grpc_client.dart';
+import '../l10n/app_localizations.dart';
 import '../tooltip.dart';
 
 const unknownIcon = Icon(Icons.help, color: Color(0xff757575), size: 15);
@@ -13,11 +14,9 @@ const icons = {
   Status.STARTING: Icon(Icons.more_horiz, color: Color(0xff757575), size: 15),
   Status.SUSPENDING: Icon(Icons.more_horiz, color: Color(0xff757575), size: 15),
   Status.DELETED: Icon(Icons.close, color: Colors.redAccent, size: 15),
-  Status.DELAYED_SHUTDOWN: Icon(
-    Icons.circle,
-    color: Color(0xff0C8420),
-    size: 10,
-  ),
+  Status.DELAYED_SHUTDOWN:
+      Icon(Icons.circle, color: Color(0xff0C8420), size: 10),
+  Status.UNAVAILABLE: Icon(Icons.circle, color: Color(0xff757575), size: 10),
 };
 
 class VmStatusIcon extends StatelessWidget {
@@ -28,9 +27,10 @@ class VmStatusIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final statusName = !isLaunching
-        ? status.name.toLowerCase().replaceAll('_', ' ')
-        : 'launching';
+    final l10n = AppLocalizations.of(context)!;
+    final statusName = l10n.vmStatusLabel(
+      !isLaunching ? status.name.toLowerCase() : 'launching',
+    );
 
     final icon = !isLaunching
         ? icons[status] ?? unknownIcon

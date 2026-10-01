@@ -290,7 +290,7 @@ QDir mp::platform::Platform::get_alias_scripts_folder() const
 }
 
 void mp::platform::Platform::create_alias_script(const std::string& alias,
-                                                 const mp::AliasDefinition& def) const
+                                                 const AliasDefinition& /*def*/) const
 {
     std::string file_path = get_alias_script_path(alias);
 
@@ -354,6 +354,56 @@ std::string mp::platform::Platform::bridge_nomenclature() const
     return br_nomenclature;
 }
 
+// validation of the ip and cidr happen later, otherwise this regex would be massive.
+const QRegularExpression subnet_regex(
+    R"(((?:[0-9][0-9]?[0-9]?\.){3}[0-9][0-9]?[0-9]?\/[0-9][0-9]?))");
+
+bool mp::platform::Platform::subnet_used_locally(mp::Subnet subnet) const
+{
+    const auto output =
+        QString::fromStdString(MP_UTILS.run_cmd_for_output("ip", {"-4", "route", "show"}));
+
+    QRegularExpressionMatchIterator i = subnet_regex.globalMatch(output);
+
+    while (i.hasNext())
+    {
+        QRegularExpressionMatch match = i.next();
+
+        try
+        {
+            mp::Subnet found_net{match.captured(1).toStdString()};
+
+            // check for overlap
+            if (found_net.contains(subnet) || subnet.contains(found_net))
+            {
+                return true;
+            }
+        }
+        catch (const std::exception& e)
+        {
+            mpl::warn(category, "invalid subnet from ip command: {}", e.what());
+        }
+    }
+
+    auto can_reach_gateway = [](mp::IPAddress ip) {
+        const auto ipstr = ip.as_string();
+        return MP_UTILS.run_cmd_for_status("ping",
+                                           {"-n", "-q", ipstr.c_str(), "-c", "1", "-W", "1"});
+    };
+
+    return can_reach_gateway(subnet.min_address()) || can_reach_gateway(subnet.max_address());
+}
+
+mp::Subnet mp::platform::Platform::get_preferred_subnet(const std::filesystem::path& data_dir) const
+{
+    // If the `multipass_subnet` file exists, prefer that as a basis for our subnet. This ensures
+    // that Multipass instances from before the introduction of AZs will have the same IP/subnet
+    // when migrated into zone1.
+    if (auto filedata = MP_FILEOPS.try_read_file(data_dir / "network/multipass_subnet"))
+        return {IPAddress{*filedata + ".0"}, 16};
+    return {"10.97.0.0/16"};
+}
+
 auto mp::platform::detail::get_network_interfaces_from(const QDir& sys_dir)
     -> std::map<std::string, NetworkInterfaceInfo>
 {
@@ -399,18 +449,25 @@ std::string mp::platform::default_server_address()
     return "unix:" + base_dir + "/multipass_socket";
 }
 
-mp::VirtualMachineFactory::UPtr mp::platform::vm_backend(const mp::Path& data_dir)
+mp::VirtualMachineFactory::UPtr mp::platform::vm_backend(const mp::Path& data_dir,
+                                                         AvailabilityZoneManager& az_manager)
 {
     const auto& driver = MP_SETTINGS.get(mp::driver_key);
     if (driver == QStringLiteral("qemu"))
-        return std::make_unique<QemuVirtualMachineFactory>(data_dir);
+        return std::make_unique<QemuVirtualMachineFactory>(data_dir, az_manager);
 
 #if VIRTUALBOX_ENABLED
     if (driver == QStringLiteral("virtualbox"))
-        return std::make_unique<VirtualBoxVirtualMachineFactory>(data_dir);
+        return std::make_unique<VirtualBoxVirtualMachineFactory>(data_dir, az_manager);
 #endif
 
     throw std::runtime_error(fmt::format("Unsupported virtualization driver: {}", driver));
+}
+
+bool mp::platform::backend_supports_availability_zones()
+{
+    const auto& driver = MP_SETTINGS.get(mp::driver_key);
+    return driver != QStringLiteral("virtualbox");
 }
 
 std::unique_ptr<mp::Process> mp::platform::make_sshfs_server_process(

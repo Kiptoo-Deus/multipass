@@ -18,7 +18,6 @@ add_definitions(-DHOST_ARCH="${HOST_ARCH}")
 
 add_library(qemu_backend STATIC
   qemu_base_process_spec.cpp
-  qemu_img_utils.cpp
   qemu_mount_handler.cpp
   qemu_snapshot.cpp
   qemu_vm_process_spec.cpp
@@ -31,7 +30,7 @@ target_link_libraries(qemu_backend
   fmt::fmt-header-only
   ip_address
   logger
-  qemu_platform_detail
+  qemu_platform_impl
   scope_guard
   utils
   Qt6::Core)

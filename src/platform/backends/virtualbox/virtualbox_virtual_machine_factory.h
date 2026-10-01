@@ -24,7 +24,8 @@ namespace multipass
 class VirtualBoxVirtualMachineFactory final : public BaseVirtualMachineFactory
 {
 public:
-    explicit VirtualBoxVirtualMachineFactory(const Path& data_dir);
+    explicit VirtualBoxVirtualMachineFactory(const Path& data_dir,
+                                             AvailabilityZoneManager& az_manager);
 
     VirtualMachine::UPtr create_virtual_machine(const VirtualMachineDescription& desc,
                                                 const SSHKeyProvider& key_provider,
@@ -44,6 +45,11 @@ public:
         return "virtualbox";
     };
     std::vector<NetworkInterfaceInfo> networks() const override;
+    // TODO@backends: remove once deprecated backends are removed
+    bool supports_availability_zones() const override
+    {
+        return false;
+    }
 
 protected:
     void remove_resources_for_impl(const std::string& name) override;

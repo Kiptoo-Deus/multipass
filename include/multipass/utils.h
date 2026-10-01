@@ -17,11 +17,10 @@
 
 #pragma once
 
-#include <multipass/logging/level.h>
+#include <multipass/logging/log_location.h>
 #include <multipass/network_interface_info.h>
 #include <multipass/path.h>
 #include <multipass/singleton.h>
-#include <multipass/ssh/ssh_session.h>
 #include <multipass/virtual_machine.h>
 
 #include <fmt/base.h>
@@ -29,10 +28,14 @@
 #include <yaml-cpp/yaml.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <functional>
 #include <future>
+#include <ranges>
+#include <source_location>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <QDir>
@@ -48,9 +51,21 @@ namespace multipass
 
 // Fwd decl
 class VirtualMachine;
+class SSHSession;
 
 namespace utils
 {
+
+// Marks code that should never be reached: logs the location and aborts.
+[[noreturn]] inline void UNREACHABLE(std::string_view message,
+                                     std::source_location loc = std::source_location::current())
+{
+    logging::log_location(logging::Level::error,
+                          logging::detail::with_source_location<std::string_view>("FATAL", loc),
+                          "Reached unreachable code: {}",
+                          message);
+    std::abort();
+}
 
 // enum types
 enum class QuoteType
@@ -67,7 +82,7 @@ enum class TimeoutAction
 
 // filesystem and path helpers
 QDir base_dir(const QString& path);
-bool is_dir(const std::string& path);
+bool is_dir(const std::filesystem::path& path);
 QString backend_directory_path(const Path& path, const QString& subdirectory);
 std::string contents_of(const multipass::Path& file_path);
 
@@ -120,19 +135,24 @@ std::optional<NetworkInterfaceInfo> find_bridge_with(
 
 // string helpers
 bool has_only_digits(const std::string& value);
-template <typename Str, typename Filter>
-Str&& trim_begin(Str&& s, Filter&& filter);
+
 template <typename Str>
-Str&& trim_begin(Str&& s);
-template <typename Str, typename Filter>
-Str&& trim_end(Str&& s, Filter&& filter);
-template <typename Str>
-Str&& trim_end(Str&& s);
-template <typename Str, typename Filter>
-Str&& trim(Str&& s, Filter&& filter);
-template <typename Str>
-Str&& trim(Str&& s);
+concept mutable_type = !std::is_const_v<std::remove_reference_t<Str>>;
+
+template <mutable_type Str, typename Filter>
+Str trim_begin(Str&& s, Filter&& filter);
+template <mutable_type Str>
+Str trim_begin(Str&& s);
+template <mutable_type Str, typename Filter>
+Str trim_end(Str&& s, Filter&& filter);
+template <mutable_type Str>
+Str trim_end(Str&& s);
+template <mutable_type Str, typename Filter>
+Str trim(Str&& s, Filter&& filter);
+template <mutable_type Str>
+Str trim(Str&& s);
 bool iequals(std::string_view lhs, std::string_view rhs);
+bool istarts_with(std::string_view str, std::string_view prefix);
 std::string& trim_newline(std::string& s);
 std::string escape_for_shell(const std::string& s);
 std::vector<std::string> split(const std::string& string, const std::string& delimiter);
@@ -146,7 +166,7 @@ std::string qenum_to_string(RegisteredQtEnum val);
 
 // other helpers
 QString get_multipass_storage();
-QString make_uuid(const std::optional<std::string>& seed = std::nullopt);
+std::string make_uuid(const std::optional<std::string>& seed = std::nullopt);
 
 template <typename OnTimeoutCallable, typename TryAction, typename... Args>
 void try_action_for(OnTimeoutCallable&& on_timeout,
@@ -248,17 +268,18 @@ public:
     virtual std::string get_kernel_version() const;
 
     // scrypt hash generator
-    virtual QString generate_scrypt_hash_for(const QString& passphrase) const;
+    virtual std::string generate_scrypt_hash_for(const std::string& passphrase) const;
 
     // virtual machine helpers
     [[nodiscard]] virtual bool is_running(const VirtualMachine::State& state) const;
     virtual std::string run_in_ssh_session(SSHSession& session,
                                            const std::string& cmd,
                                            bool whisper = false) const;
+    virtual std::string reap_ssh_process(SSHProcess& proc) const;
 
     // various
     virtual std::vector<uint8_t> random_bytes(size_t len);
-    virtual QString make_uuid(const std::optional<std::string>& seed = std::nullopt) const;
+    virtual std::string make_uuid(const std::optional<std::string>& seed = std::nullopt) const;
     virtual void sleep_for(const std::chrono::milliseconds& ms) const;
     virtual bool is_ipv4_valid(const std::string& ipv4) const;
 
@@ -274,43 +295,43 @@ namespace multipass::utils::detail
 inline constexpr auto is_space = [](unsigned char c) { return std::isspace(c); };
 } // namespace multipass::utils::detail
 
-template <typename Str, typename Filter>
-Str&& multipass::utils::trim_begin(Str&& s, Filter&& filter)
+template <multipass::utils::mutable_type Str, typename Filter>
+Str multipass::utils::trim_begin(Str&& s, Filter&& filter)
 {
     const auto it = std::find_if_not(s.begin(), s.end(), std::forward<Filter>(filter));
     s.erase(s.begin(), it);
     return std::forward<Str>(s);
 }
 
-template <typename Str>
-Str&& multipass::utils::trim_begin(Str&& s)
+template <multipass::utils::mutable_type Str>
+Str multipass::utils::trim_begin(Str&& s)
 {
     return trim_begin(std::forward<Str>(s), detail::is_space);
 }
 
-template <typename Str, typename Filter>
-Str&& multipass::utils::trim_end(Str&& s, Filter&& filter)
+template <multipass::utils::mutable_type Str, typename Filter>
+Str multipass::utils::trim_end(Str&& s, Filter&& filter)
 {
     auto rev_it = std::find_if_not(s.rbegin(), s.rend(), std::forward<Filter>(filter));
     s.erase(rev_it.base(), s.end());
     return std::forward<Str>(s);
 }
 
-template <typename Str>
-Str&& multipass::utils::trim_end(Str&& s)
+template <multipass::utils::mutable_type Str>
+Str multipass::utils::trim_end(Str&& s)
 {
     return trim_end(std::forward<Str>(s), detail::is_space);
 }
 
-template <typename Str, typename Filter>
-Str&& multipass::utils::trim(Str&& s, Filter&& filter)
+template <multipass::utils::mutable_type Str, typename Filter>
+Str multipass::utils::trim(Str&& s, Filter&& filter)
 {
     auto&& ret = trim_end(std::forward<Str>(s), filter);
     return trim_begin(std::forward<decltype(ret)>(ret), std::forward<Filter>(filter));
 }
 
-template <typename Str>
-Str&& multipass::utils::trim(Str&& s)
+template <multipass::utils::mutable_type Str>
+Str multipass::utils::trim(Str&& s)
 {
     return trim(std::forward<Str>(s), detail::is_space);
 }

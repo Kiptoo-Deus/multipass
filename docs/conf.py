@@ -1,5 +1,6 @@
 import datetime
 import ast
+import os
 
 # Configuration for the Sphinx documentation builder.
 # All configuration specific to your project should be done in this file.
@@ -70,10 +71,25 @@ copyright = "%s CC-BY-SA, %s" % (datetime.date.today().year, author)
 # NOTE: The Open Graph Protocol (OGP) enhances page display in a social graph
 #       and is used by social media platforms; see https://ogp.me/
 
-ogp_site_url = "https://documentation.ubuntu.com/multipass/en/latest/"
+version_slug = f"{os.environ.get('READTHEDOCS_VERSION', 'local')}"
+html_baseurl = f"https://canonical.com/multipass/docs/{version_slug}/"
+ogp_site_url = html_baseurl
 
-html_baseurl = "https://documentation.ubuntu.com/multipass/"  # for sitemap.xml, the trailing slash is important
-sitemap_url_scheme = "latest/{link}"
+sitemap_url_scheme = "{link}"
+sitemap_filename = "doc-sitemap.xml"  # Required to avoid sitemap conflicts
+
+# Include `lastmod` dates in the sitemap:
+
+sitemap_show_lastmod = True
+
+# Exclude generated pages from the sitemap:
+
+sitemap_excludes = [
+    '404/',
+    'genindex/',
+    'search/',
+]
+
 
 # Preview name of the documentation website
 #
@@ -165,7 +181,7 @@ html_theme_options = {
 # TODO: If your documentation is hosted on https://docs.ubuntu.com/,
 #       uncomment and update as needed.
 
-slug = "multipass"
+slug = "multipass/docs"
 
 
 # Template and asset locations
@@ -199,24 +215,24 @@ redirects = {}
 # TODO: Remove or adjust the ACME entry after you update the contributing guide
 
 linkcheck_ignore = [
-    "https://app.element.io/#/room/#Multipass:matrix.org",
-    "http://127.0.0.1:8000",
-    "http://127.0.0.1:8001",
-    "https://localhost:8080",
+    r"https://app\.element\.io/",
     "https://localhost:8081",
     "https://github.com/canonical/*",
     "https://sourceforge.net/projects/vcxsrv/",
     "https://sourceforge.net/projects/xming/",
     "http://www.straightrunning.com/XmingNotes/",
     "https://unix.stackexchange.com",  # it seems stackexchange is now blocking bots
-    "https://developer.hashicorp.com/packer"
+    "https://developer.hashicorp.com/packer",
+    "https://www.freedesktop.org/*",
+    "https://asciinema.org/*",
+    "https://askubuntu.com/a/4404"
 ]
 
 linkcheck_retries = 3
 
 # A regex list of URLs where anchors are ignored by 'make linkcheck'
 
-linkcheck_anchors_ignore_for_url = [r"https://github\.com/.*"]
+linkcheck_anchors_ignore_for_url = [r"https://github\.com/", r"https://matrix\.to/"]
 
 
 ########################
@@ -274,7 +290,8 @@ html_css_files = [
 # Adds custom JavaScript files, located under 'html_static_path'
 
 html_js_files = [
-    "js/bundle.js",
+    "bundle.js",
+    "js/overwrite_links.js",
 ]
 
 

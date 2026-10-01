@@ -70,6 +70,16 @@ auto make_network_manager(const mp::Path& cache_dir_path)
     return out;
 }
 
+QString multipass_user_agent()
+{
+    static const auto user_agent = QString::fromStdString(
+        fmt::format("Multipass/{} ({}; {})",
+                    multipass::version_string,
+                    mp::platform::host_version(),
+                    QSysInfo::currentCpuArchitecture()));
+    return user_agent;
+}
+
 void wait_for_reply(QNetworkReply* reply, QTimer& download_timeout)
 {
     QEventLoop event_loop;
@@ -104,11 +114,7 @@ QByteArray download(QNetworkAccessManager* manager,
     request.setRawHeader("Connection", "Keep-Alive");
     request.setAttribute(QNetworkRequest::HttpPipeliningAllowedAttribute, true);
     request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, cache_load_control);
-    request.setHeader(QNetworkRequest::UserAgentHeader,
-                      QString::fromStdString(fmt::format("Multipass/{} ({}; {})",
-                                                         multipass::version_string,
-                                                         mp::platform::host_version(),
-                                                         QSysInfo::currentCpuArchitecture())));
+    request.setHeader(QNetworkRequest::UserAgentHeader, multipass_user_agent());
 
     NetworkReplyUPtr reply{manager->get(request)};
 
@@ -184,6 +190,7 @@ auto get_header(QNetworkAccessManager* manager,
 
     const QUrl adjusted_url = make_http_url_https(url);
     QNetworkRequest request{adjusted_url};
+    request.setHeader(QNetworkRequest::UserAgentHeader, multipass_user_agent());
 
     NetworkReplyUPtr reply{manager->head(request)};
 
@@ -242,7 +249,7 @@ mp::URLDownloader::URLDownloader(const mp::Path& cache_dir, std::chrono::millise
 void mp::URLDownloader::download_to(const QUrl& url,
                                     const QString& file_name,
                                     int64_t size,
-                                    const int download_type,
+                                    const int progress_type,
                                     const mp::ProgressMonitor& monitor)
 {
     std::atomic_bool abort_download{false};
@@ -253,7 +260,7 @@ void mp::URLDownloader::download_to(const QUrl& url,
         throw std::runtime_error(
             fmt::format("unable to write to file \"{}\"", file_name.toStdString()));
 
-    auto progress_monitor = [this, &abort_download, &monitor, download_type, size](
+    auto progress_monitor = [this, &abort_download, &monitor, progress_type, size](
                                 QNetworkReply* reply,
                                 qint64 bytes_received,
                                 qint64 bytes_total) {
@@ -267,7 +274,7 @@ void mp::URLDownloader::download_to(const QUrl& url,
         auto progress = (size < 0) ? size : (100 * bytes_received + bytes_total / 2) / bytes_total;
 
         abort_download = abort_downloads ||
-                         (last_progress_printed != progress && !monitor(download_type, progress));
+                         (last_progress_printed != progress && !monitor(progress_type, progress));
         last_progress_printed = progress;
 
         if (abort_download)

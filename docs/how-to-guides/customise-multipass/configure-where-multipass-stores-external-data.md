@@ -8,13 +8,14 @@ This document demonstrates how to configure the location where Multipass stores 
 
 ```{caution}
 **Caveats:**
-- Multipass will not migrate your existing data; this article explains how to do it manually. If you do not transfer the data, you will have to re-download any Ubuntu images and reinitialise any instances that you need.
+- Multipass will not migrate your existing data; this article explains how to do it manually. If you do not transfer the data, you will have to re-download any images and reinitialise any instances that you need.
 - When uninstalling Multipass, the uninstaller will not remove data stored in custom locations, so you'll have to delete it manually.
 ```
 
-`````{tabs}
+`````{tab-set}
 
-````{group-tab} Linux
+````{tab-item} Linux
+:sync: Linux
 
 First, stop the Multipass daemon:
 
@@ -86,7 +87,8 @@ sudo rm -rf /var/snap/multipass/common/cache/multipassd
 
 ````
 
-````{group-tab} macOS
+````{tab-item} macOS
+:sync: macOS
 
 First, become `root`:
 
@@ -124,7 +126,8 @@ launchctl load /Library/LaunchDaemons/com.canonical.multipassd.plist
 
 ````
 
-````{group-tab} Windows
+````{tab-item} Windows
+:sync: Windows
 
 First, open a PowerShell prompt with administration privileges.
 
@@ -181,9 +184,10 @@ Remove-Item -Path "C:\ProgramData\Multipass\data\vault\*" -Recurse
 
 ## Reverting back to the default location
 
-`````{tabs}
+`````{tab-set}
 
-````{group-tab} Linux
+````{tab-item} Linux
+:sync: Linux
 
 Stop the Multipass daemon:
 
@@ -231,7 +235,8 @@ sudo rm -rf <path>
 
 ````
 
-````{group-tab} macOS
+````{tab-item} macOS
+:sync: macOS
 
 First, become `root`:
 
@@ -265,7 +270,8 @@ launchctl load /Library/LaunchDaemons/com.canonical.multipassd.plist
 
 ````
 
-````{group-tab} Windows
+````{tab-item} Windows
+:sync: Windows
 
 First, open a PowerShell prompt with administrator privileges.
 

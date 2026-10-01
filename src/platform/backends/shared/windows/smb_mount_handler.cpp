@@ -24,17 +24,26 @@
 #include <multipass/file_ops.h>
 #include <multipass/platform.h>
 #include <multipass/ssh/sftp_utils.h>
+#include <multipass/ssh/ssh_process.h>
 #include <multipass/ssh/ssh_session.h>
 #include <multipass/utils.h>
 #include <multipass/virtual_machine.h>
 
 #include <QHostInfo>
+#include <ztd/out_ptr.hpp>
 
+#include <Windows.h>
+#include <Aclapi.h>
 #include <lm.h>
+#include <sddl.h>
+
 #pragma comment(lib, "Netapi32.lib")
 
 namespace mp = multipass;
 namespace mpl = multipass::logging;
+using ztd::out_ptr::out_ptr;
+
+using sid_buffer = std::vector<unsigned char>;
 
 namespace
 {
@@ -48,9 +57,9 @@ try
     mpl::info(category, "Installing cifs-utils in '{}'", name);
 
     auto proc = session.exec("sudo apt-get update && sudo apt-get install -y cifs-utils");
-    if (proc.exit_code(timeout) != 0)
+    if (proc->exit_code(timeout) != 0)
     {
-        auto error_msg = proc.read_std_error();
+        auto error_msg = proc->read_std_error();
         mpl::warn(category,
                   "Failed to install 'cifs-utils', error message: '{}'",
                   mp::utils::trim_end(error_msg));
@@ -62,6 +71,92 @@ catch (const mp::ExitlessSSHProcessException&)
     mpl::info(category, "Timeout while installing 'cifs-utils' in '{}'", name);
     throw std::runtime_error("Timeout installing cifs-utils");
 }
+
+/**
+ * Retrieve SID of given user name.
+ *
+ * @param [in] user_name The user name
+ * @return std::wstring User's SID as wide string
+ */
+sid_buffer get_user_sid(const std::wstring& user_name)
+{
+    DWORD sid_size = 0, domain_size = 0;
+    SID_NAME_USE sid_use{};
+    LookupAccountNameW(nullptr,
+                       user_name.c_str(),
+                       nullptr,
+                       &sid_size,
+                       nullptr,
+                       &domain_size,
+                       &sid_use);
+
+    std::vector<unsigned char> sid(sid_size);
+    std::wstring domain(domain_size, wchar_t('\0'));
+    if (!LookupAccountNameW(nullptr,
+                            user_name.c_str(),
+                            sid.data(),
+                            &sid_size,
+                            domain.data(),
+                            &domain_size,
+                            &sid_use))
+        throw std::runtime_error("LookupAccountName failed");
+    return sid;
+}
+
+/**
+ * Check whether given user has full control over the path.
+ *
+ * @param [in] path The target path
+ * @param [in] user_sid User's SID
+ *
+ * @return true if user @p user_sid has full control, false otherwise.
+ */
+bool has_full_control(const std::filesystem::path& path, const sid_buffer& user_sid)
+{
+    std::unique_ptr<SECURITY_DESCRIPTOR, decltype(&LocalFree)> pSD{nullptr, LocalFree};
+    PACL pDACL = nullptr;
+
+    DWORD result = GetNamedSecurityInfoW(path.c_str(),
+                                         SE_FILE_OBJECT,
+                                         DACL_SECURITY_INFORMATION,
+                                         nullptr,
+                                         nullptr,
+                                         &pDACL,
+                                         nullptr,
+                                         out_ptr(pSD));
+
+    if (result != ERROR_SUCCESS)
+        throw std::runtime_error("Failed to get security info");
+
+    // "If a Windows object does not have a discretionary access control list (DACL), the system
+    // allows everyone full access to it. If an object has a DACL, the system allows only the access
+    // that is explicitly allowed by the access control entries (ACEs) in the DACL."
+    //
+    // @see https://learn.microsoft.com/en-us/windows/win32/secauthz/null-dacls-and-empty-dacls
+    // @see https://learn.microsoft.com/en-us/windows/win32/secauthz/dacls-and-aces
+    if (nullptr == pDACL)
+        return true;
+
+    for (DWORD i = 0; i < pDACL->AceCount; ++i)
+    {
+        LPVOID pAce = nullptr;
+        if (!GetAce(pDACL, i, &pAce))
+            continue;
+
+        auto ace = reinterpret_cast<ACCESS_ALLOWED_ACE*>(pAce);
+        if (ace->Header.AceType != ACCESS_ALLOWED_ACE_TYPE)
+            continue;
+
+        if (!EqualSid(reinterpret_cast<PSID>(&ace->SidStart),
+                      const_cast<PSID>(reinterpret_cast<const void*>(user_sid.data()))))
+            continue;
+
+        if ((ace->Mask & FILE_ALL_ACCESS) == FILE_ALL_ACCESS)
+            return true;
+    }
+    return false;
+}
+
 } // namespace
 
 namespace multipass
@@ -82,19 +177,8 @@ void SmbManager::create_share(const QString& share_name,
     if (share_exists(share_name))
         return;
 
-    // TODO: I tried to use the proper Windows API to get ACL permissions for the user being passed
-    // in, but alas, the API is very convoluted. At some point, another attempt should be made to
-    // use the proper API though...
-    QString user_access_output;
-    const auto user_access_res =
-        PowerShell::exec({QString{"(Get-Acl '%1').Access | ?{($_.IdentityReference -match '%2') "
-                                  "-and ($_.FileSystemRights "
-                                  "-eq 'FullControl')}"}
-                              .arg(source, user)},
-                         "Get ACLs",
-                         &user_access_output);
-
-    if (!user_access_res || user_access_output.isEmpty())
+    auto user_sid = get_user_sid(user.toStdWString());
+    if (!has_full_control(source.toStdWString(), user_sid))
         throw std::runtime_error{fmt::format("cannot access \"{}\"", source)};
 
     std::wstring remark = L"Multipass mount share";
@@ -102,7 +186,7 @@ void SmbManager::create_share(const QString& share_name,
     auto wide_source = source.toStdWString();
 
     DWORD parm_err = 0;
-    SHARE_INFO_2 share_info;
+    SHARE_INFO_2 share_info = {};
     share_info.shi2_netname = wide_share_name.data();
     share_info.shi2_remark = remark.data();
     share_info.shi2_type = STYPE_DISKTREE;
@@ -218,12 +302,11 @@ bool SmbMountHandler::is_active()
 try
 {
     return active && smb_manager->share_exists(share_name) &&
-           !SSHSession{vm->ssh_hostname(), vm->ssh_port(), vm->ssh_username(), *ssh_key_provider}
-                .exec(fmt::format("findmnt --type cifs | grep '{} //{}/{}'",
-                                  target,
-                                  QHostInfo::localHostName(),
-                                  share_name))
-                .exit_code();
+           !vm->ssh_exec_process(fmt::format("findmnt --type cifs | grep '{} //{}/{}'",
+                                             target,
+                                             QHostInfo::localHostName(),
+                                             share_name))
+                ->exit_code();
 }
 catch (const std::exception& e)
 {
@@ -238,15 +321,15 @@ catch (const std::exception& e)
 void SmbMountHandler::activate_impl(ServerVariant server, std::chrono::milliseconds timeout)
 try
 {
-    SSHSession session{vm->ssh_hostname(), vm->ssh_port(), vm->ssh_username(), *ssh_key_provider};
+    auto session = vm->new_ssh_session();
 
     const auto username = MP_PLATFORM.get_username();
-    const auto user_id = MP_UTILS.make_uuid(username.toStdString());
+    const auto user_id = QString::fromStdString(MP_UTILS.make_uuid(username.toStdString()));
     const auto iv_filename = user_id + ".iv";
     const auto cred_filename = user_id + ".cifs";
 
-    if (session.exec("dpkg-query --show --showformat='${db:Status-Status}' cifs-utils")
-            .read_std_output() != "installed")
+    if (session->exec("dpkg-query --show --showformat='${db:Status-Status}' cifs-utils")
+            ->read_std_output() != "installed")
     {
         auto visitor = [](auto server) {
             if (server)
@@ -258,7 +341,7 @@ try
         };
 
         std::visit(visitor, server);
-        install_cifs_for(vm->get_name(), session, timeout);
+        install_cifs_for(vm->get_name(), *session, timeout);
     }
 
     const auto rtext = decrypt_credentials_from_file(cred_filename, iv_filename);
@@ -297,12 +380,12 @@ try
     smb_manager->create_share(share_name, source, username);
 
     // The following mkdir in the instance will be replaced with refactored code
-    auto mkdir_proc = session.exec(fmt::format("mkdir -p {}", target));
-    if (mkdir_proc.exit_code() != 0)
+    auto mkdir_proc = session->exec(fmt::format("mkdir -p {}", target));
+    if (mkdir_proc->exit_code() != 0)
         throw std::runtime_error(fmt::format("Cannot create \"{}\" in instance '{}': {}",
                                              target,
                                              vm->get_name(),
-                                             mkdir_proc.read_std_error()));
+                                             mkdir_proc->read_std_error()));
 
     auto smb_creds = fmt::format("username={}\npassword={}", username, password);
     const std::string credentials_path{"/tmp/.smb_credentials"};
@@ -314,21 +397,21 @@ try
     sftp_client->from_cin(creds_stringstream, credentials_path, false);
 
     auto hostname = QHostInfo::localHostName();
-    auto mount_proc = session.exec(
+    auto mount_proc = session->exec(
         fmt::format("sudo mount -t cifs //{}/{} {} -o credentials={},uid=$(id -u),gid=$(id -g)",
                     hostname,
                     share_name,
                     target,
                     credentials_path));
-    auto mount_exit_code = mount_proc.exit_code();
-    auto mount_error_msg = mount_proc.read_std_error();
+    auto mount_exit_code = mount_proc->exit_code();
+    auto mount_error_msg = mount_proc->read_std_error();
 
-    auto rm_proc = session.exec(fmt::format("sudo rm {}", credentials_path));
-    if (rm_proc.exit_code() != 0)
+    auto rm_proc = session->exec(fmt::format("sudo rm {}", credentials_path));
+    if (rm_proc->exit_code() != 0)
         mpl::warn(category,
                   "Failed deleting credentials file in \'{}\': {}",
                   vm->get_name(),
-                  rm_proc.read_std_error());
+                  rm_proc->read_std_error());
 
     if (mount_exit_code != 0)
     {
@@ -346,10 +429,7 @@ void SmbMountHandler::deactivate_impl(bool force)
 try
 {
     mpl::info(category, "Stopping native mount \"{}\" in instance '{}'", target, vm->get_name());
-    SSHSession session{vm->ssh_hostname(), vm->ssh_port(), vm->ssh_username(), *ssh_key_provider};
-    MP_UTILS.run_in_ssh_session(
-        session,
-        fmt::format("if mountpoint -q {0}; then sudo umount {0}; else true; fi", target));
+    vm->ssh_exec(fmt::format("if mountpoint -q {0}; then sudo umount {0}; else true; fi", target));
     smb_manager->remove_share(share_name);
 }
 catch (const std::exception& e)

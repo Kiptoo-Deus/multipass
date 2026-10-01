@@ -17,6 +17,7 @@
 
 #include "daemon_config.h"
 
+#include <multipass/base_availability_zone_manager.h>
 #include <multipass/client_cert_store.h>
 #include <multipass/constants.h>
 #include <multipass/image_host/custom_image_host.h>
@@ -29,6 +30,7 @@
 #include <multipass/ssh/openssh_key_provider.h>
 #include <multipass/ssl_cert_provider.h>
 #include <multipass/standard_paths.h>
+#include <multipass/stub_availability_zone_manager.h>
 #include <multipass/utils.h>
 #include <multipass/utils/permission_utils.h>
 
@@ -135,8 +137,15 @@ std::unique_ptr<const mp::DaemonConfig> mp::DaemonConfigBuilder::build()
 
     if (url_downloader == nullptr)
         url_downloader = std::make_unique<URLDownloader>(cache_directory, std::chrono::seconds{10});
+    if (az_manager == nullptr)
+        az_manager = platform::backend_supports_availability_zones()
+                       ? std::unique_ptr<AvailabilityZoneManager>(
+                             std::make_unique<BaseAvailabilityZoneManager>(
+                                 data_directory.toStdString()))
+                       : std::unique_ptr<AvailabilityZoneManager>(
+                             std::make_unique<StubAvailabilityZoneManager>());
     if (factory == nullptr)
-        factory = platform::vm_backend(data_directory);
+        factory = platform::vm_backend(data_directory, *az_manager);
     if (update_prompt == nullptr)
         update_prompt = platform::make_update_prompt();
     if (image_hosts.empty())
@@ -148,16 +157,16 @@ std::unique_ptr<const mp::DaemonConfig> mp::DaemonConfigBuilder::build()
                  UbuntuVMImageRemote{"https://cloud-images.ubuntu.com/",
                                      "releases/",
                                      mp::image_mutators::release_mutator,
-                                     std::make_optional<QString>(mp::mirror_key)}},
+                                     std::make_optional<std::string>(mp::mirror_key)}},
                 {mp::daily_remote,
                  UbuntuVMImageRemote{"https://cloud-images.ubuntu.com/",
                                      "daily/",
-                                     std::make_optional<QString>(mp::mirror_key)}},
+                                     std::make_optional<std::string>(mp::mirror_key)}},
                 {mp::snapcraft_remote,
                  UbuntuVMImageRemote{"https://cloud-images.ubuntu.com/",
                                      "buildd/daily/",
                                      mp::image_mutators::snapcraft_mutator,
-                                     std::make_optional<QString>(mp::mirror_key)}},
+                                     std::make_optional<std::string>(mp::mirror_key)}},
                 {mp::core_remote,
                  UbuntuVMImageRemote{"https://cdimage.ubuntu.com/",
                                      "ubuntu-core/",
@@ -181,7 +190,7 @@ std::unique_ptr<const mp::DaemonConfig> mp::DaemonConfigBuilder::build()
             days_to_expire);
     }
     if (name_generator == nullptr)
-        name_generator = mp::make_default_name_generator();
+        name_generator = mp::petname::make_petname_provider();
     if (server_address.empty())
         server_address = platform::default_server_address();
     if (ssh_key_provider == nullptr)
@@ -230,6 +239,7 @@ std::unique_ptr<const mp::DaemonConfig> mp::DaemonConfigBuilder::build()
                                                                 std::move(update_prompt),
                                                                 multiplexing_logger,
                                                                 std::move(network_proxy),
+                                                                std::move(az_manager),
                                                                 cache_directory,
                                                                 data_directory,
                                                                 server_address,

@@ -41,8 +41,7 @@ namespace
 {
 constexpr auto log_category = "ssl-cert-provider";
 template <typename T>
-concept pointer_like = requires(T t)
-{
+concept pointer_like = requires(T t) {
     *t;
     t == nullptr;
 };
@@ -198,11 +197,13 @@ void set_random_serial_number(X509* cert)
 
     // Convert BIGNUM to ASN1_INTEGER and set it as the certificate serial number
     // ASN1 is a standard binary format for encoding data like serial numbers in X.509 certificates
-    ASN1_INTEGER* serial = BN_to_ASN1_INTEGER(bn.get(), nullptr);
+    std::unique_ptr<ASN1_INTEGER, decltype(&ASN1_INTEGER_free)> serial{
+        BN_to_ASN1_INTEGER(bn.get(), nullptr),
+        ASN1_INTEGER_free};
     openssl_check(serial, "Failed to convert serial bytes to BIGNUM\n");
 
     // Set the serial number in the certificate
-    openssl_check(X509_set_serialNumber(cert, serial), "Failed to set serial number!\n");
+    openssl_check(X509_set_serialNumber(cert, serial.get()), "Failed to set serial number!\n");
 }
 
 /**
@@ -309,10 +310,9 @@ public:
 
         const auto country = as_vector("US");
         const auto org = as_vector("Canonical");
-        const auto cn =
-            as_vector(cert_type == CertType::Root     ? "Multipass Root CA"
-                      : cert_type == CertType::Client ? mp::utils::make_uuid().toStdString()
-                                                      : server_name);
+        const auto cn = as_vector(cert_type == CertType::Root     ? "Multipass Root CA"
+                                  : cert_type == CertType::Client ? mp::utils::make_uuid()
+                                                                  : server_name);
         const auto subject_name = X509_get_subject_name(cert.get());
         X509_NAME_add_entry_by_txt(subject_name,
                                    "C",

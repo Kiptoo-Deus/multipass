@@ -14,16 +14,20 @@
 
 function(add_target TARGET_NAME)
   add_library(${TARGET_NAME} STATIC
+    alias_definition.cpp
     file_ops.cpp
     memory_size.cpp
     permission_utils.cpp
     json_utils.cpp
+    qemu_img_utils.cpp
     snap_utils.cpp
     standard_paths.cpp
     timer.cpp
     utils.cpp
+    vm_image_info.cpp
     vm_image_vault_utils.cpp
     vm_mount.cpp
+    vm_specs.cpp
     yaml_node_utils.cpp
     semver_compare.cpp)
 
@@ -37,6 +41,7 @@ function(add_target TARGET_NAME)
     yaml-cpp::yaml-cpp
     xz_image_decoder
     Qt6::Core
+    Boost::json
     PRIVATE semver::semver
     )
 

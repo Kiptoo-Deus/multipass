@@ -34,8 +34,10 @@
 #include <QRegularExpression>
 #include <QStorageInfo>
 #include <QSysInfo>
-#include <QUuid>
 #include <QtGlobal>
+#include <boost/uuid.hpp>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
 
 #include <algorithm>
 #include <array>
@@ -48,16 +50,12 @@
 #include <regex>
 #include <sstream>
 
-#include <openssl/evp.h>
-#include <openssl/rand.h>
-
 namespace mp = multipass;
 namespace mpl = multipass::logging;
 
 namespace
 {
 constexpr auto category = "utils";
-constexpr auto scrypt_hash_size{64};
 } // namespace
 mp::Utils::Utils(const Singleton<Utils>::PrivatePass& pass) noexcept
     : Singleton<Utils>::Singleton{pass}
@@ -137,11 +135,12 @@ std::string mp::Utils::get_kernel_version() const
     return QSysInfo::kernelVersion().toStdString();
 }
 
-QString mp::Utils::generate_scrypt_hash_for(const QString& passphrase) const
+std::string mp::Utils::generate_scrypt_hash_for(const std::string& passphrase) const
 {
-    QByteArray hash(scrypt_hash_size, '\0');
+    unsigned char digest[EVP_MAX_MD_SIZE] = {0};
 
-    if (!EVP_PBE_scrypt(passphrase.toStdString().c_str(),
+    // TODO: Move to openssl singleton when we have one
+    if (!EVP_PBE_scrypt(passphrase.c_str(),
                         passphrase.size(),
                         nullptr,
                         0,
@@ -149,11 +148,11 @@ QString mp::Utils::generate_scrypt_hash_for(const QString& passphrase) const
                         8,
                         1,
                         0,
-                        reinterpret_cast<unsigned char*>(hash.data()),
-                        scrypt_hash_size))
+                        digest,
+                        sizeof(digest)))
         throw std::runtime_error("Cannot generate passphrase hash");
 
-    return QString(hash.toHex());
+    return fmt::format("{:02x}", fmt::join(digest, digest + sizeof(digest), ""));
 }
 
 QDir mp::utils::base_dir(const QString& path)
@@ -215,6 +214,17 @@ std::string& mp::utils::trim_newline(std::string& s)
     return s;
 }
 
+bool mp::utils::istarts_with(std::string_view str, std::string_view prefix)
+{
+    if (prefix.size() > str.size())
+        return false;
+    // TODO(C++23): Use std::ranges::starts_with
+    return std::ranges::equal(
+        str | std::views::take(prefix.size()),
+        prefix,
+        [](unsigned char a, unsigned char b) { return std::tolower(a) == std::tolower(b); });
+}
+
 // Escape all characters which need to be escaped in the shell.
 std::string mp::utils::escape_for_shell(const std::string& in)
 {
@@ -262,10 +272,9 @@ std::vector<std::string> mp::utils::split(const std::string& string, const std::
 
 std::string mp::utils::generate_mac_address()
 {
-    std::default_random_engine gen;
-    std::uniform_int_distribution<int> dist{0, 255};
+    thread_local std::mt19937 gen{std::random_device{}()};
+    thread_local std::uniform_int_distribution<int> dist{0, 255};
 
-    gen.seed(std::chrono::system_clock::now().time_since_epoch().count());
     std::array<int, 3> octets{{dist(gen), dist(gen), dist(gen)}};
     return fmt::format("52:54:00:{:02x}:{:02x}:{:02x}", octets[0], octets[1], octets[2]);
 }
@@ -287,16 +296,22 @@ std::string mp::Utils::run_in_ssh_session(mp::SSHSession& session,
                                           bool whisper) const
 {
     auto proc = session.exec(cmd, whisper);
+    return reap_ssh_process(*proc);
+}
 
-    if (auto ec = proc.exit_code() != 0)
+std::string mp::Utils::reap_ssh_process(mp::SSHProcess& proc) const
+{
+    if (auto ec = proc.exit_code(); ec != 0)
     {
         auto error_msg = mp::utils::trim_end(proc.read_std_error());
-        mpl::debug(category, "failed to run '{}', error message: '{}'", cmd, error_msg);
-        throw mp::SSHExecFailure(error_msg, ec);
+        auto suffix = error_msg.empty() ? fmt::format("exit_code {} (no stderr output)", ec)
+                                        : fmt::format("error message: '{}'", error_msg);
+        mpl::debug(category, "failed to run '{}', {}", proc.get_cmd(), suffix);
+
+        throw mp::SSHExecFailure{error_msg, ec};
     }
 
-    auto output = proc.read_std_output();
-    return mp::utils::trim_end(output);
+    return mp::utils::trim_end(proc.read_std_output());
 }
 
 mp::Path mp::Utils::make_dir(const QDir& a_dir,
@@ -348,11 +363,22 @@ QString mp::utils::get_multipass_storage()
     return QString::fromUtf8(qgetenv(mp::multipass_storage_env_var));
 }
 
-QString mp::utils::make_uuid(const std::optional<std::string>& seed)
+std::string mp::utils::make_uuid(const std::optional<std::string>& seed)
 {
-    auto uuid =
-        seed ? QUuid::createUuidV3(QUuid{}, QString::fromStdString(*seed)) : QUuid::createUuid();
-    return uuid.toString(QUuid::WithoutBraces);
+    boost::uuids::uuid uuid{};
+
+    if (seed)
+    {
+        boost::uuids::name_generator_md5 gen(boost::uuids::nil_uuid());
+        uuid = gen(*seed);
+    }
+    else
+    {
+        thread_local boost::uuids::random_generator gen;
+        uuid = gen();
+    }
+
+    return boost::uuids::to_string(uuid);
 }
 
 std::string mp::utils::contents_of(const multipass::Path& file_path)
@@ -391,7 +417,7 @@ std::vector<uint8_t> mp::Utils::random_bytes(size_t len)
     return bytes;
 }
 
-QString mp::Utils::make_uuid(const std::optional<std::string>& seed) const
+std::string mp::Utils::make_uuid(const std::optional<std::string>& seed) const
 {
     return mp::utils::make_uuid(seed);
 }

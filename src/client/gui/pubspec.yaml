@@ -6,6 +6,8 @@ environment:
   sdk: '>=3.0.3 <4.0.0'
 
 dependencies:
+  flutter_localizations:
+    sdk: flutter
   async: ^2.13.0
   basics: ^0.10.0
   built_collection: ^5.1.1
@@ -13,7 +15,7 @@ dependencies:
   dartssh2:
     git:
       url: https://github.com/canonical/dartssh2.git
-      ref: 2.12.0+mp
+      ref: 2.17.1+mp
   extended_text: ^15.0.0
   ffi: ^2.1.4
   file_selector: ^1.0.3
@@ -30,7 +32,7 @@ dependencies:
   local_notifier: ^0.1.6
   logger: ^2.5.0
   path_provider: ^2.1.5
-  protobuf: 5.1.0
+  protobuf: 6.1.0
   rxdart: ^0.28.0
   shared_preferences: ^2.5.2
   synchronized: ^3.3.1
@@ -38,9 +40,9 @@ dependencies:
     git:
       url: https://github.com/canonical/tray_menu.git
       ref: main
-  two_dimensional_scrollables: ^0.3.3
+  two_dimensional_scrollables: ^0.5.0
   url_launcher: ^6.3.1
-  win32: ^5.14.0
+  win32: 6.4.0
   window_manager: ^0.5.0
   window_size:
     git:
@@ -49,7 +51,7 @@ dependencies:
       ref: 6c66ad2
   xterm:
     git:
-      url: https://github.com/levkropp/xterm.dart
+      url: https://github.com/canonical/xterm.dart
       ref: 4.0.0+mp
 
 dependency_overrides:
@@ -64,6 +66,7 @@ dev_dependencies:
   flutter_lints: ^6.0.0
 
 flutter:
+  generate: true
   uses-material-design: true
   assets:
     - assets/

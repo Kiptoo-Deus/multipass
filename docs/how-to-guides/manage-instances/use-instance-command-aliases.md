@@ -1,7 +1,7 @@
 (how-to-guides-manage-instances-use-instance-command-aliases)=
 # Use instance command aliases
 
-> See also: [Alias](explanation-alias), [Instance](explanation-instance).
+> See also: [Instance](explanation-instance).
 
 This guide demonstrates how to create, list, run and remove aliases for commands running inside an instance.
 
@@ -110,9 +110,9 @@ aliases to work without prefixing with `multipass`:
 PATH="$PATH:/home/user/snap/multipass/common/bin"
 ```
 
-`````{tabs}
+`````{tab-set}
 
-````{group-tab} Linux
+````{tab-item} Linux
 
 On Linux, you'll have to edit the shell configuration file. In most Linux distributions, the shell used by default is `bash`. You can configure this option by editing the file `.bashrc` in the user's home directory using a text editor; for example:
 
@@ -134,7 +134,7 @@ If your shell is `zsh` and not `bash`, the file to modify is `.zshrc` instead of
 
 ````
 
-````{group-tab} macOS
+````{tab-item} macOS
 
 On macOS, you'll have to edit the shell configuration file. The shell used by default is `zsh`. You can configure this option by editing the file `.zshrc` in the user's home directory using a text editor.
 
@@ -151,7 +151,7 @@ Remember to replace the correct folder, as indicated in the output of the Multip
 
 ````
 
-````{group-tab} Windows
+````{tab-item} Windows
 
 On Windows, to make the change permanent, use PowerShell to store the old system path, add the alias folder to it, and store the new path:
 
