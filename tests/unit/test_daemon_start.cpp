@@ -209,8 +209,8 @@ TEST_F(TestDaemonStart, errorsForMultipleInstancesAreOnSeparateLines)
 {
     auto mock_factory = use_a_mock_vm_factory();
     const std::vector<std::string> names{mock_instance_name, "other-instance"};
-    const auto [temp_dir, filename] =
-        plant_instance_json(make_instance_json(mac_addr, {}, {names[1]}));
+    const auto [temp_dir,
+                filename] = plant_instance_json(make_instance_json(mac_addr, {}, {names[1]}));
 
     EXPECT_CALL(*mock_factory, create_virtual_machine)
         .Times(2)
