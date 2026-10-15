@@ -1522,9 +1522,26 @@ mp::Daemon::Daemon(std::unique_ptr<const DaemonConfig> the_config)
         if (spec_copy.state == e_state::running)
         {
             assert(operative_instances.contains(name));
+
+            // A backend failing to report one instance's state must not stop the daemon from
+            // starting, so leave that instance as it is and carry on with the others.
+            e_state present_state;
+            try
+            {
+                present_state = operative_instances[name]->current_state();
+            }
+            catch (const std::exception& e)
+            {
+                mpl::warn(category,
+                          "Could not get the state of {}, not restarting it: {}",
+                          name,
+                          e.what());
+                continue;
+            }
+
             // If the VM was in running state before, we need to do some additional
             // work to ensure everything is in sync.
-            switch (operative_instances[name]->current_state())
+            switch (present_state)
             {
             case e_state::running:
             case e_state::starting:
