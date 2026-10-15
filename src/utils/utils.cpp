@@ -679,8 +679,8 @@ bool mp::Utils::invalid_target_path(const QString& target_path) const
 {
     assert(target_path == mp::utils::normalize_path(target_path) &&
            "target_path must be normalized");
-    static QRegularExpression matcher{
-        QRegularExpression::anchoredPattern("/+|/+(dev|proc|sys)(/.*)*|/+home(/*)(/ubuntu/*)*")};
+    static QRegularExpression matcher{QRegularExpression::anchoredPattern(
+        "/+|/+(dev|proc|sys)(/.*)*|/+etc/*|/+home(/*)(/ubuntu/*)*")};
 
     return matcher.match(target_path).hasMatch();
 }

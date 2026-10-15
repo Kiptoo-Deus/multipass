@@ -137,6 +137,21 @@ TEST(Utils, pathSysInvalid)
     EXPECT_TRUE(MP_UTILS.invalid_target_path(QString("/sys/foo")));
 }
 
+TEST(Utils, pathEtcInvalid)
+{
+    EXPECT_TRUE(MP_UTILS.invalid_target_path(QString("/etc")));
+}
+
+TEST(Utils, pathEtcSubdirValid)
+{
+    EXPECT_FALSE(MP_UTILS.invalid_target_path(QString("/etc/foo")));
+}
+
+TEST(Utils, pathEtcPrefixValid)
+{
+    EXPECT_FALSE(MP_UTILS.invalid_target_path(QString("/etcfoo")));
+}
+
 TEST(Utils, pathHomeProperInvalid)
 {
     EXPECT_TRUE(MP_UTILS.invalid_target_path(QString("/home")));
