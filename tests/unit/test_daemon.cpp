@@ -554,6 +554,36 @@ TEST_F(Daemon, callsOnRestartForAlreadyStartingVmsOnConstruction)
     mp::Daemon daemon{config_builder.build()};
 }
 
+TEST_F(Daemon, skipsPreviouslyRunningVmWhoseStateCannotBeRead)
+{
+    auto mock_factory = use_a_mock_vm_factory();
+    multipass::test::fake_vm_properties vm_props{};
+    vm_props.default_mac = "52:54:00:73:76:28";
+    vm_props.state = multipass::VirtualMachine::State::running;
+    const auto [temp_dir, _] = plant_instance_json(fake_json_contents(vm_props));
+    config_builder.data_directory = temp_dir->path();
+    config_builder.vault = std::make_unique<NiceMock<mpt::MockVMImageVault>>();
+
+    // The backend fails to report the state of this VM.
+    auto mock_vm = std::make_unique<NiceMock<mpt::MockVirtualMachine>>();
+    EXPECT_CALL(*mock_vm, get_name).WillRepeatedly(ReturnRef(vm_props.name));
+    EXPECT_CALL(*mock_vm, current_state).WillOnce(Throw(std::runtime_error{"state query failed"}));
+    EXPECT_CALL(*mock_vm, start).Times(0);
+    EXPECT_CALL(*mock_vm, handle_state_update).Times(0);
+    EXPECT_CALL(*mock_vm, wait_until_ssh_up).Times(0);
+    EXPECT_CALL(*mock_factory, create_virtual_machine).WillOnce(Return(std::move(mock_vm)));
+
+    auto cfg = config_builder.build();
+    auto logger_scope = mpt::MockLogger::inject();
+    logger_scope.mock_logger->screen_logs(mpl::Level::warning);
+    logger_scope.mock_logger->expect_log(
+        mpl::Level::warning,
+        fmt::format("Could not get the state of {}, not restarting it: state query failed",
+                    vm_props.name));
+
+    EXPECT_NO_THROW(mp::Daemon daemon{std::move(cfg)});
+}
+
 TEST_F(Daemon, updatesTheDeletedButNonStoppedVmState)
 {
     auto mock_factory = use_a_mock_vm_factory();
